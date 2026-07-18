@@ -1,0 +1,28 @@
+version: 2
+project_name: terraform-provider-forge
+before:
+  hooks:
+    - go test ./...
+builds:
+  - id: provider
+    main: .
+    binary: terraform-provider-forge_v{{ .Version }}
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ldflags: ['-s -w -X main.version={{ .Version }}']
+archives:
+  - formats: [zip]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+checksum:
+  name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+signs:
+  - cmd: .github/scripts/gpg-sign.sh
+    artifacts: checksum
+    signature: '${artifact}.sig'
+    args: ['${artifact}', '${signature}']
+release:
+  extra_files:
+    - glob: terraform-registry-manifest.json
+changelog:
+  disable: true
