@@ -23,8 +23,8 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
           printf '%s' "${GPG_PRIVATE_KEY}" | gpg --batch --import
-          fingerprint="$(gpg --batch --with-colons --fingerprint --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')"
-          test "${fingerprint}" = "2EF4C8BC353B0C7F016888DCA3CF051A2B9B1202C"
+          fingerprint="2EF4C8BC353B0C7F016888DCA3CF051A2B9B1202C"
+          gpg --batch --list-secret-keys "${fingerprint}" >/dev/null
           echo "GPG_FINGERPRINT=${fingerprint}" >> "${GITHUB_ENV}"
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
