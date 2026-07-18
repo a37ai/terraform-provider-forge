@@ -53,7 +53,7 @@ func (r *skillACLResource) Schema(_ context.Context, _ resource.SchemaRequest, p
 		"id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Validators: nonempty}, "skill": schema.StringAttribute{Required: true, Description: "Exact skill name or slug.", Validators: nonempty},
 		"enabled": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)}, "users": optionalSubjectSetAttribute("Exact user emails."), "user_directory_ids": directoryQualifierAttribute("user"),
 		"groups": optionalSubjectSetAttribute("Exact group names."), "group_directory_ids": directoryQualifierAttribute("group"), "effect": schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf(canonicalSkillEffects...)}},
-		"current_revision": schema.Int64Attribute{Computed: true}, "definition_sha256": schema.StringAttribute{Computed: true}, "validation_token": schema.StringAttribute{Optional: true, Computed: true, Sensitive: true},
+		"current_revision": schema.Int64Attribute{Computed: true}, "definition_sha256": schema.StringAttribute{Computed: true}, "validation_token": schema.StringAttribute{Computed: true, Sensitive: true},
 	}}
 }
 func (r *skillACLResource) Configure(_ context.Context, q resource.ConfigureRequest, p *resource.ConfigureResponse) {
