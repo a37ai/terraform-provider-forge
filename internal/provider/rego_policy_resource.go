@@ -140,7 +140,7 @@ func (r *regoPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		"remediation_target": schema.StringAttribute{Optional: true},
 		"current_revision":   schema.Int64Attribute{Computed: true},
 		"definition_sha256":  schema.StringAttribute{Computed: true},
-		"validation_token":   schema.StringAttribute{Optional: true, Computed: true, Sensitive: true, Description: "Short-lived server plan binding. Managed internally by the provider and never authored."},
+		"validation_token":   schema.StringAttribute{Computed: true, Sensitive: true, Description: "Short-lived server plan binding. Managed internally by the provider and never authored."},
 		"module_sha256":      schema.StringAttribute{Computed: true},
 	}
 	if r.family == "content" {

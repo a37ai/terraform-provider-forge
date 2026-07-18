@@ -160,6 +160,35 @@ func TestLLMGatewayTerraformResourceUsesCanonicalAccessProfileRoutePlan(t *testi
 	}
 }
 
+func TestLLMGatewayRefreshPreservesOmittedSelectorsAndExactRouteConfig(t *testing.T) {
+	priorRoutes, diagnostics := types.ListValueFrom(context.Background(), routeObjectType(), []llmGatewayRoutePlanModel{
+		{ID: types.StringNull(), Provider: types.StringValue("OpenAI"), Name: types.StringValue("Primary"), RequestedModelPattern: types.StringValue("gpt-*"), UpstreamModel: types.StringValue("gpt-5"), APISurface: types.StringValue("openai_responses"), PolicyHooks: types.SetNull(types.StringType), ConfigJSON: types.StringNull()},
+		{ID: types.StringValue("route.secondary"), Provider: types.StringValue("OpenAI"), Name: types.StringValue("Secondary"), RequestedModelPattern: types.StringValue("gpt-4*"), UpstreamModel: types.StringValue("gpt-4.1"), APISurface: types.StringValue("openai_responses"), PolicyHooks: types.SetNull(types.StringType), ConfigJSON: types.StringValue("{}")},
+	})
+	if diagnostics.HasError() {
+		t.Fatalf("route model diagnostics=%v", diagnostics)
+	}
+	model := llmGatewayAccessProfileModel{ModelSelectorsJSON: types.StringNull(), SubjectBindingsJSON: types.StringNull(), Routes: priorRoutes}
+	profile := llmGatewayAccessProfileAPI{ID: "profile", Name: "Profile", State: "active", EnforcementMode: "enforce", SubjectBindings: json.RawMessage("[]"), ModelSelectors: json.RawMessage("{}")}
+	routes := []llmGatewayRouteAPI{
+		{ID: "route.primary", ProviderID: "provider", Name: "Primary", RequestedModelPattern: "gpt-*", UpstreamModel: "gpt-5", APISurface: "openai_responses", Config: json.RawMessage("{}")},
+		{ID: "route.secondary", ProviderID: "provider", Name: "Secondary", RequestedModelPattern: "gpt-4*", UpstreamModel: "gpt-4.1", APISurface: "openai_responses", Config: json.RawMessage("{}")},
+	}
+	var refreshDiagnostics diag.Diagnostics
+	(&llmGatewayAccessProfileResource{}).refreshModel(context.Background(), &model, profile, routes, []llmGatewayProviderAPI{{ID: "provider", Name: "OpenAI"}}, &refreshDiagnostics)
+	if refreshDiagnostics.HasError() {
+		t.Fatalf("refresh diagnostics=%v", refreshDiagnostics)
+	}
+	if !model.ModelSelectorsJSON.IsNull() {
+		t.Fatalf("omitted model selectors became %q", model.ModelSelectorsJSON.ValueString())
+	}
+	var refreshed []llmGatewayRoutePlanModel
+	refreshDiagnostics.Append(model.Routes.ElementsAs(context.Background(), &refreshed, false)...)
+	if len(refreshed) != 2 || !refreshed[0].ConfigJSON.IsNull() || refreshed[1].ConfigJSON.ValueString() != "{}" {
+		t.Fatalf("route config state was not matched exactly: %+v", refreshed)
+	}
+}
+
 func TestEverySubjectResourcePreservesDirectoryQualifiers(t *testing.T) {
 	users := stringSet("alex@example.com")
 	groups := stringSet("Finance")

@@ -165,14 +165,14 @@ func (r *llmGatewayAccessProfileResource) apply(ctx context.Context, plan interf
 	if diagnostics.HasError() {
 		return
 	}
+	var summary llmGatewaySummary
+	if err := r.client.Do(ctx, http.MethodGet, "llm-gateway", nil, &summary); err != nil {
+		diagnostics.AddError("Resolve Forge LLM Gateway provider references", err.Error())
+		return
+	}
 	var response llmGatewayRoutePlanResponse
 	if err := r.client.Do(ctx, http.MethodPost, "llm-gateway/access-profiles/save", body, &response); err != nil {
 		diagnostics.AddError("Save Forge LLM Gateway access profile", err.Error())
-		return
-	}
-	var summary llmGatewaySummary
-	if err := r.client.Do(ctx, http.MethodGet, "llm-gateway", nil, &summary); err != nil {
-		diagnostics.AddError("Refresh Forge LLM Gateway provider references", err.Error())
 		return
 	}
 	r.refreshModel(ctx, &model, response.AccessProfile, response.Routes, summary.Providers, diagnostics)
@@ -283,7 +283,7 @@ func (r *llmGatewayAccessProfileResource) refreshModel(ctx context.Context, mode
 		model.SubjectBindingsJSON = types.StringValue(bindings)
 	}
 	selectors := strings.TrimSpace(string(profile.ModelSelectors))
-	if selectors == "" || selectors == "null" {
+	if selectors == "" || selectors == "null" || selectors == "{}" {
 		if model.ModelSelectorsJSON.IsNull() || model.ModelSelectorsJSON.IsUnknown() {
 			model.ModelSelectorsJSON = types.StringNull()
 		} else {
@@ -316,7 +316,7 @@ func (r *llmGatewayAccessProfileResource) refreshModel(ctx context.Context, mode
 		if config == "" || config == "null" || config == "{}" {
 			configState = types.StringValue("{}")
 			for _, prior := range priorRoutes {
-				if prior.Provider.ValueString() == providerName && prior.APISurface.ValueString() == route.APISurface && (prior.ConfigJSON.IsNull() || prior.ConfigJSON.IsUnknown()) {
+				if sameGatewayRoute(prior, route, providerName) && (prior.ConfigJSON.IsNull() || prior.ConfigJSON.IsUnknown()) {
 					configState = types.StringNull()
 					break
 				}
@@ -327,6 +327,19 @@ func (r *llmGatewayAccessProfileResource) refreshModel(ctx context.Context, mode
 	value, ds := types.ListValueFrom(ctx, routeObjectType(), items)
 	diagnostics.Append(ds...)
 	model.Routes = value
+}
+
+func sameGatewayRoute(prior llmGatewayRoutePlanModel, current llmGatewayRouteAPI, providerName string) bool {
+	currentID := strings.TrimSpace(current.ID)
+	priorID := strings.TrimSpace(prior.ID.ValueString())
+	if currentID != "" && priorID != "" {
+		return currentID == priorID
+	}
+	return prior.Provider.ValueString() == providerName &&
+		prior.Name.ValueString() == current.Name &&
+		prior.RequestedModelPattern.ValueString() == current.RequestedModelPattern &&
+		prior.UpstreamModel.ValueString() == current.UpstreamModel &&
+		prior.APISurface.ValueString() == current.APISurface
 }
 func routeObjectType() types.ObjectType {
 	return types.ObjectType{AttrTypes: map[string]attr.Type{"id": types.StringType, "provider": types.StringType, "name": types.StringType, "requested_model_pattern": types.StringType, "upstream_model": types.StringType, "api_surface": types.StringType, "strategy": types.StringType, "route_priority": types.Int64Type, "weight": types.Int64Type, "rollout_state": types.StringType, "enforcement_mode": types.StringType, "policy_hooks": types.SetType{ElemType: types.StringType}, "tool_deny_behavior": types.StringType, "config_json": types.StringType}}

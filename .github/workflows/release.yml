@@ -14,6 +14,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
@@ -23,7 +24,7 @@ jobs:
         run: |
           printf '%s' "${GPG_PRIVATE_KEY}" | gpg --batch --import
           fingerprint="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')"
-          test -n "${fingerprint}"
+          test "${fingerprint}" = "2EF4C8BC353B0C7F016888DCA3CF051A2B9B1202C"
           echo "GPG_FINGERPRINT=${fingerprint}" >> "${GITHUB_ENV}"
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:

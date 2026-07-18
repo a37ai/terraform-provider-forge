@@ -64,6 +64,13 @@ resource "forge_skill_acl" "deploy" {
 }
 ```
 
+If local development state used the former provider address, update it once
+before planning:
+
+```sh
+terraform state replace-provider registry.terraform.io/forge/forge registry.terraform.io/a37ai/forge
+```
+
 Resources: `forge_content_policy`, `forge_access_policy`,
 `forge_llm_gateway_access_profile`, `forge_mcp_acl`, and `forge_skill_acl`.
 `forge_policy_authority` is the explicit, revision-bound

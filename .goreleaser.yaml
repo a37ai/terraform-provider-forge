@@ -16,6 +16,9 @@ archives:
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
 checksum:
   name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+  extra_files:
+    - glob: terraform-registry-manifest.json
+      name_template: 'terraform-provider-forge_{{ .Version }}_manifest.json'
 signs:
   - cmd: .github/scripts/gpg-sign.sh
     artifacts: checksum
@@ -24,5 +27,6 @@ signs:
 release:
   extra_files:
     - glob: terraform-registry-manifest.json
+      name_template: 'terraform-provider-forge_{{ .Version }}_manifest.json'
 changelog:
   disable: true
