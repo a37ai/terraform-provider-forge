@@ -48,3 +48,34 @@ func TestLLMGatewayPolicyHooksRejectResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestLLMGatewayRouteStrategiesMatchTierModel(t *testing.T) {
+	var schemaResponse resource.SchemaResponse
+	(&llmGatewayAccessProfileResource{}).Schema(context.Background(), resource.SchemaRequest{}, &schemaResponse)
+	route := schemaResponse.Schema.Blocks["route"].(schema.ListNestedBlock)
+	strategy := route.NestedObject.Attributes["strategy"].(schema.StringAttribute)
+
+	for _, test := range []struct {
+		value   string
+		wantErr bool
+	}{
+		{value: "fixed"},
+		{value: "weighted"},
+		{value: "policy"},
+		{value: "cost"},
+		{value: "latency"},
+		{value: "fallback", wantErr: true},
+		{value: "quality", wantErr: true},
+	} {
+		t.Run(test.value, func(t *testing.T) {
+			request := validator.StringRequest{ConfigValue: types.StringValue(test.value)}
+			var response validator.StringResponse
+			for _, strategyValidator := range strategy.Validators {
+				strategyValidator.ValidateString(context.Background(), request, &response)
+			}
+			if response.Diagnostics.HasError() != test.wantErr {
+				t.Fatalf("diagnostics=%v, want error=%t", response.Diagnostics, test.wantErr)
+			}
+		})
+	}
+}

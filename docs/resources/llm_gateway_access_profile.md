@@ -55,7 +55,7 @@ Optional:
 - `policy_hooks` (Set of String) Gateway stages evaluated on this route: prompt, pre_tool_use, and post_tool_use.
 - `rollout_state` (String) Route rollout state: draft, monitor, simulate, enforce, paused, or archived.
 - `route_priority` (Number)
-- `strategy` (String) Route selection strategy: fixed, fallback, weighted, policy, cost, latency, or quality.
+- `strategy` (String) Selection strategy within this priority tier: fixed, weighted, policy, cost, or latency. Configure later priority tiers for fallback.
 - `tool_deny_behavior` (String) Denied tool behavior: hard_block rejects the request; rewrite_refusal returns a refusal-shaped result.
 - `upstream_model` (String)
 - `weight` (Number)
