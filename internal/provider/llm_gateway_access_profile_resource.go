@@ -30,12 +30,20 @@ type llmGatewayAccessProfileModel struct {
 	Description         types.String `tfsdk:"description"`
 	State               types.String `tfsdk:"state"`
 	EnforcementMode     types.String `tfsdk:"enforcement_mode"`
+	SubjectBindings     types.List   `tfsdk:"subject_binding"`
+	ModelPatterns       types.Set    `tfsdk:"model_patterns"`
 	SubjectBindingsJSON types.String `tfsdk:"subject_bindings_json"`
 	ModelSelectorsJSON  types.String `tfsdk:"model_selectors_json"`
 	DataClasses         types.Set    `tfsdk:"data_classes"`
 	PolicyHooks         types.Set    `tfsdk:"policy_hooks"`
 	Routes              types.List   `tfsdk:"route"`
 	Version             types.Int64  `tfsdk:"version"`
+}
+
+type llmGatewaySubjectBindingModel struct {
+	SubjectKind types.String `tfsdk:"subject_kind"`
+	SubjectName types.String `tfsdk:"subject_name"`
+	SubjectID   types.String `tfsdk:"subject_id"`
 }
 
 type llmGatewayRoutePlanModel struct {
@@ -56,13 +64,31 @@ type llmGatewayRoutePlanModel struct {
 }
 
 type llmGatewaySummary struct {
-	Providers      []llmGatewayProviderAPI      `json:"providers"`
-	AccessProfiles []llmGatewayAccessProfileAPI `json:"accessProfiles"`
-	Routes         []llmGatewayRouteAPI         `json:"routes"`
+	Providers       []llmGatewayProviderAPI       `json:"providers"`
+	AccessProfiles  []llmGatewayAccessProfileAPI  `json:"accessProfiles"`
+	Routes          []llmGatewayRouteAPI          `json:"routes"`
+	ServiceAccounts []llmGatewayServiceAccountAPI `json:"serviceAccounts"`
 }
 type llmGatewayProviderAPI struct {
 	ID   string `json:"id"`
 	Name string `json:"displayName"`
+}
+type llmGatewayServiceAccountAPI struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+type llmGatewaySubjectResolutionResponse struct {
+	Items []llmGatewayResolvedSubjectAPI `json:"items"`
+}
+type llmGatewayResolvedSubjectAPI struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	SubjectID string `json:"subjectId"`
+}
+type llmGatewaySubjectResolutions struct {
+	byName map[string]string
+	byID   map[string]string
 }
 type llmGatewayRoutePlanResponse struct {
 	AccessProfile llmGatewayAccessProfileAPI `json:"accessProfile"`
@@ -106,18 +132,58 @@ func (r *llmGatewayAccessProfileResource) Metadata(_ context.Context, q resource
 }
 func (r *llmGatewayAccessProfileResource) Schema(_ context.Context, _ resource.SchemaRequest, p *resource.SchemaResponse) {
 	hooks := func(description string) schema.SetAttribute {
-		return schema.SetAttribute{Optional: true, Description: description, ElementType: types.StringType, Validators: []validator.Set{setvalidator.ValueStringsAre(stringvalidator.OneOf("prompt", "pre_tool_use", "post_tool_use", "response"))}}
+		return schema.SetAttribute{Optional: true, Description: description, ElementType: types.StringType, Validators: []validator.Set{setvalidator.ValueStringsAre(stringvalidator.OneOf("prompt", "pre_tool_use", "post_tool_use"))}}
 	}
 	p.Schema = schema.Schema{Description: "A Forge LLM Gateway access profile and its atomic provider route plan. This is the same durable object used by the staging gateway runtime and console.", Attributes: map[string]schema.Attribute{
 		"id":   schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 		"name": schema.StringAttribute{Required: true}, "description": schema.StringAttribute{Optional: true},
-		"state":                 schema.StringAttribute{Optional: true, Computed: true, Description: "Lifecycle state: draft, active, disabled, or archived.", Validators: []validator.String{stringvalidator.OneOf("draft", "active", "disabled", "archived")}},
-		"enforcement_mode":      schema.StringAttribute{Optional: true, Computed: true, Description: "Policy behavior: monitor records decisions, simulate returns simulated outcomes, enforce changes traffic, and break_glass bypasses enforcement while retaining audit evidence.", Validators: []validator.String{stringvalidator.OneOf("monitor", "simulate", "enforce", "break_glass")}},
-		"subject_bindings_json": schema.StringAttribute{Optional: true, Description: "JSON array using the gateway runtime's native subject binding schema."},
-		"model_selectors_json":  schema.StringAttribute{Optional: true, Description: "JSON object using the gateway runtime's native model selector schema."},
-		"data_classes":          schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}},
-		"policy_hooks":          hooks("Gateway stages evaluated for this profile: prompt, pre_tool_use, post_tool_use, and response."), "version": schema.Int64Attribute{Computed: true},
+		"state":            schema.StringAttribute{Optional: true, Computed: true, Description: "Lifecycle state: draft, active, disabled, or archived.", Validators: []validator.String{stringvalidator.OneOf("draft", "active", "disabled", "archived")}},
+		"enforcement_mode": schema.StringAttribute{Optional: true, Computed: true, Description: "Policy behavior: monitor records decisions, simulate returns simulated outcomes, enforce changes traffic, and break_glass bypasses enforcement while retaining audit evidence.", Validators: []validator.String{stringvalidator.OneOf("monitor", "simulate", "enforce", "break_glass")}},
+		"model_patterns": schema.SetAttribute{
+			Optional: true, Computed: true, ElementType: types.StringType,
+			Description: "Requested model names or glob patterns allowed by this profile, such as gpt-5 or claude-*.",
+			Validators:  []validator.Set{setvalidator.SizeAtMost(256), setvalidator.ConflictsWith(path.MatchRoot("model_selectors_json"))},
+		},
+		"subject_bindings_json": schema.StringAttribute{
+			Optional:           true,
+			Description:        "Deprecated compatibility input for the gateway subject binding JSON array. Use subject_binding blocks.",
+			DeprecationMessage: "Use typed subject_binding blocks. subject_bindings_json remains available only for configurations created with Forge provider v0.1.0.",
+			Validators:         []validator.String{stringvalidator.ConflictsWith(path.MatchRoot("subject_binding"))},
+		},
+		"model_selectors_json": schema.StringAttribute{
+			Optional:           true,
+			Description:        "Deprecated compatibility input for the gateway model selector JSON object. Use model_patterns.",
+			DeprecationMessage: "Use model_patterns. model_selectors_json remains available only for configurations created with Forge provider v0.1.0.",
+			Validators:         []validator.String{stringvalidator.ConflictsWith(path.MatchRoot("model_patterns"))},
+		},
+		"data_classes": schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}},
+		"policy_hooks": hooks("Gateway stages evaluated for this profile: prompt, pre_tool_use, and post_tool_use."), "version": schema.Int64Attribute{Computed: true},
 	}, Blocks: map[string]schema.Block{
+		"subject_binding": schema.ListNestedBlock{
+			Description: "A typed gateway principal binding. Use subject_name with an exact customer-visible selector; subject_id is deprecated compatibility only.",
+			Validators: []validator.List{
+				listvalidator.SizeAtMost(256),
+				listvalidator.ConflictsWith(path.MatchRoot("subject_bindings_json")),
+			},
+			NestedObject: schema.NestedBlockObject{Attributes: map[string]schema.Attribute{
+				"subject_kind": schema.StringAttribute{
+					Required:    true,
+					Description: "Principal type: user, group, app, service_account, agent, or customer_tenant.",
+					Validators:  []validator.String{stringvalidator.OneOf("user", "group", "app", "service_account", "agent", "customer_tenant")},
+				},
+				"subject_id": schema.StringAttribute{
+					Optional:           true,
+					Description:        "Deprecated stable Forge principal ID compatibility input. Use subject_name.",
+					DeprecationMessage: "Use subject_name with a customer-visible email, name, label, or slug.",
+					Validators:         []validator.String{stringvalidator.ExactlyOneOf(path.MatchRelative().AtParent().AtName("subject_name"))},
+				},
+				"subject_name": schema.StringAttribute{
+					Optional:    true,
+					Description: "Exact readable selector: user email, group name, app name or slug, service-account name, agent name, or customer-tenant name or slug. Forge rejects missing, inactive, or ambiguous matches.",
+					Validators:  []validator.String{stringvalidator.ExactlyOneOf(path.MatchRelative().AtParent().AtName("subject_id"))},
+				},
+			}},
+		},
 		"route": schema.ListNestedBlock{Validators: []validator.List{listvalidator.SizeAtLeast(1)}, NestedObject: schema.NestedBlockObject{Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{Optional: true, Computed: true}, "provider": schema.StringAttribute{Required: true, Description: "Exact provider name configured in Forge. Forge resolves the name to its canonical internal ID and rejects missing or ambiguous matches."}, "name": schema.StringAttribute{Required: true},
 			"requested_model_pattern": schema.StringAttribute{Required: true}, "upstream_model": schema.StringAttribute{Optional: true},
@@ -131,7 +197,7 @@ func (r *llmGatewayAccessProfileResource) Schema(_ context.Context, _ resource.S
 			"route_priority": schema.Int64Attribute{Optional: true, Computed: true}, "weight": schema.Int64Attribute{Optional: true, Computed: true},
 			"rollout_state":    schema.StringAttribute{Optional: true, Computed: true, Description: "Route rollout state: draft, monitor, simulate, enforce, paused, or archived.", Validators: []validator.String{stringvalidator.OneOf("draft", "monitor", "simulate", "enforce", "paused", "archived")}},
 			"enforcement_mode": schema.StringAttribute{Optional: true, Computed: true, Description: "Route policy behavior: monitor, simulate, enforce, or break_glass.", Validators: []validator.String{stringvalidator.OneOf("monitor", "simulate", "enforce", "break_glass")}},
-			"policy_hooks":     hooks("Gateway stages evaluated on this route: prompt, pre_tool_use, post_tool_use, and response."), "tool_deny_behavior": schema.StringAttribute{Optional: true, Computed: true, Description: "Denied tool behavior: hard_block rejects the request; rewrite_refusal returns a refusal-shaped result.", Validators: []validator.String{stringvalidator.OneOf("hard_block", "rewrite_refusal")}},
+			"policy_hooks":     hooks("Gateway stages evaluated on this route: prompt, pre_tool_use, and post_tool_use."), "tool_deny_behavior": schema.StringAttribute{Optional: true, Computed: true, Description: "Denied tool behavior: hard_block rejects the request; rewrite_refusal returns a refusal-shaped result.", Validators: []validator.String{stringvalidator.OneOf("hard_block", "rewrite_refusal")}},
 			"config_json": schema.StringAttribute{Optional: true, Description: "JSON object passed to the native gateway route config."},
 		}}},
 	}}
@@ -161,13 +227,17 @@ func (r *llmGatewayAccessProfileResource) apply(ctx context.Context, plan interf
 	if diagnostics.HasError() {
 		return
 	}
-	body := r.payload(ctx, model, diagnostics)
-	if diagnostics.HasError() {
-		return
-	}
 	var summary llmGatewaySummary
 	if err := r.client.Do(ctx, http.MethodGet, "llm-gateway", nil, &summary); err != nil {
 		diagnostics.AddError("Resolve Forge LLM Gateway provider references", err.Error())
+		return
+	}
+	resolutions := r.resolveSubjects(ctx, model.SubjectBindings, diagnostics)
+	if diagnostics.HasError() {
+		return
+	}
+	body := r.payload(ctx, model, resolutions, diagnostics)
+	if diagnostics.HasError() {
 		return
 	}
 	var response llmGatewayRoutePlanResponse
@@ -175,20 +245,90 @@ func (r *llmGatewayAccessProfileResource) apply(ctx context.Context, plan interf
 		diagnostics.AddError("Save Forge LLM Gateway access profile", err.Error())
 		return
 	}
-	r.refreshModel(ctx, &model, response.AccessProfile, response.Routes, summary.Providers, diagnostics)
+	r.refreshModel(ctx, &model, response.AccessProfile, response.Routes, summary.Providers, resolutions, diagnostics)
 	if !diagnostics.HasError() {
 		save(model)
 	}
 }
-func (r *llmGatewayAccessProfileResource) payload(ctx context.Context, model llmGatewayAccessProfileModel, diagnostics *diag.Diagnostics) map[string]any {
+
+func (r *llmGatewayAccessProfileResource) resolveSubjects(ctx context.Context, bindings types.List, diagnostics *diag.Diagnostics) llmGatewaySubjectResolutions {
+	resolved := llmGatewaySubjectResolutions{byName: map[string]string{}, byID: map[string]string{}}
+	if bindings.IsNull() || bindings.IsUnknown() {
+		return resolved
+	}
+	var typed []llmGatewaySubjectBindingModel
+	diagnostics.Append(bindings.ElementsAs(ctx, &typed, false)...)
+	if diagnostics.HasError() {
+		return resolved
+	}
+	subjects := make([]map[string]string, 0, len(typed))
+	for _, binding := range typed {
+		if binding.SubjectName.IsNull() || binding.SubjectName.IsUnknown() || strings.TrimSpace(binding.SubjectName.ValueString()) == "" {
+			continue
+		}
+		subjects = append(subjects, map[string]string{
+			"kind": binding.SubjectKind.ValueString(),
+			"name": strings.TrimSpace(binding.SubjectName.ValueString()),
+		})
+	}
+	if len(subjects) == 0 {
+		return resolved
+	}
+	var response llmGatewaySubjectResolutionResponse
+	if err := r.client.Do(ctx, http.MethodPost, "llm-gateway/subjects/resolve", map[string]any{"subjects": subjects}, &response); err != nil {
+		diagnostics.AddError("Resolve Forge LLM Gateway subjects", err.Error())
+		return resolved
+	}
+	if len(response.Items) != len(subjects) {
+		diagnostics.AddError("Resolve Forge LLM Gateway subjects", "Forge returned an incomplete subject resolution response")
+		return resolved
+	}
+	for _, item := range response.Items {
+		resolved.byName[gatewaySubjectResolutionKey(item.Kind, item.Name)] = item.SubjectID
+		resolved.byID[gatewaySubjectResolutionKey(item.Kind, item.SubjectID)] = item.Name
+	}
+	return resolved
+}
+
+func gatewaySubjectResolutionKey(kind, value string) string {
+	if strings.TrimSpace(kind) == "user" {
+		value = strings.ToLower(value)
+	}
+	return strings.TrimSpace(kind) + "\x00" + strings.TrimSpace(value)
+}
+
+func (r *llmGatewayAccessProfileResource) payload(ctx context.Context, model llmGatewayAccessProfileModel, resolutions llmGatewaySubjectResolutions, diagnostics *diag.Diagnostics) map[string]any {
 	selectors := map[string]any{}
-	if !model.ModelSelectorsJSON.IsNull() && strings.TrimSpace(model.ModelSelectorsJSON.ValueString()) != "" {
+	if !model.ModelPatterns.IsNull() && !model.ModelPatterns.IsUnknown() {
+		var patterns []string
+		diagnostics.Append(model.ModelPatterns.ElementsAs(ctx, &patterns, false)...)
+		selectors["modelPatterns"] = patterns
+	} else if !model.ModelSelectorsJSON.IsNull() && strings.TrimSpace(model.ModelSelectorsJSON.ValueString()) != "" {
 		if err := json.Unmarshal([]byte(model.ModelSelectorsJSON.ValueString()), &selectors); err != nil {
 			diagnostics.AddError("Invalid model_selectors_json", err.Error())
 		}
 	}
 	bindings := []any{}
-	if !model.SubjectBindingsJSON.IsNull() && strings.TrimSpace(model.SubjectBindingsJSON.ValueString()) != "" {
+	if !model.SubjectBindings.IsNull() && !model.SubjectBindings.IsUnknown() {
+		var typedBindings []llmGatewaySubjectBindingModel
+		diagnostics.Append(model.SubjectBindings.ElementsAs(ctx, &typedBindings, false)...)
+		for _, binding := range typedBindings {
+			subjectID := binding.SubjectID.ValueString()
+			if !binding.SubjectName.IsNull() && !binding.SubjectName.IsUnknown() && strings.TrimSpace(binding.SubjectName.ValueString()) != "" {
+				name := strings.TrimSpace(binding.SubjectName.ValueString())
+				resolved, ok := resolutions.byName[gatewaySubjectResolutionKey(binding.SubjectKind.ValueString(), name)]
+				if !ok || resolved == "" {
+					diagnostics.AddError("Resolve Forge LLM Gateway subject", fmt.Sprintf("%s subject_name %q was not resolved by Forge", binding.SubjectKind.ValueString(), name))
+					continue
+				}
+				subjectID = resolved
+			}
+			bindings = append(bindings, map[string]any{
+				"subjectKind": binding.SubjectKind.ValueString(),
+				"subjectId":   subjectID,
+			})
+		}
+	} else if !model.SubjectBindingsJSON.IsNull() && strings.TrimSpace(model.SubjectBindingsJSON.ValueString()) != "" {
 		if err := json.Unmarshal([]byte(model.SubjectBindingsJSON.ValueString()), &bindings); err != nil {
 			diagnostics.AddError("Invalid subject_bindings_json", err.Error())
 		}
@@ -261,7 +401,11 @@ func (r *llmGatewayAccessProfileResource) Read(ctx context.Context, q resource.R
 				routes = append(routes, route)
 			}
 		}
-		r.refreshModel(ctx, &model, profile, routes, summary.Providers, &p.Diagnostics)
+		resolutions := r.resolveSubjects(ctx, model.SubjectBindings, &p.Diagnostics)
+		if p.Diagnostics.HasError() {
+			return
+		}
+		r.refreshModel(ctx, &model, profile, routes, summary.Providers, resolutions, &p.Diagnostics)
 		if !p.Diagnostics.HasError() {
 			p.Diagnostics.Append(p.State.Set(ctx, &model)...)
 		}
@@ -269,26 +413,34 @@ func (r *llmGatewayAccessProfileResource) Read(ctx context.Context, q resource.R
 	}
 	p.State.RemoveResource(ctx)
 }
-func (r *llmGatewayAccessProfileResource) refreshModel(ctx context.Context, model *llmGatewayAccessProfileModel, profile llmGatewayAccessProfileAPI, routes []llmGatewayRouteAPI, providers []llmGatewayProviderAPI, diagnostics *diag.Diagnostics) {
+func (r *llmGatewayAccessProfileResource) refreshModel(ctx context.Context, model *llmGatewayAccessProfileModel, profile llmGatewayAccessProfileAPI, routes []llmGatewayRouteAPI, providers []llmGatewayProviderAPI, resolutions llmGatewaySubjectResolutions, diagnostics *diag.Diagnostics) {
 	model.ID, model.Name = types.StringValue(profile.ID), types.StringValue(profile.Name)
 	model.Description, model.State, model.EnforcementMode = optionalString(profile.Description), types.StringValue(profile.State), types.StringValue(profile.EnforcementMode)
 	bindings := strings.TrimSpace(string(profile.SubjectBindings))
-	if bindings == "" || bindings == "null" || (bindings == "[]" && (model.SubjectBindingsJSON.IsNull() || model.SubjectBindingsJSON.IsUnknown())) {
-		if model.SubjectBindingsJSON.IsNull() || model.SubjectBindingsJSON.IsUnknown() {
+	if !model.SubjectBindings.IsNull() || model.SubjectBindingsJSON.IsNull() || model.SubjectBindingsJSON.IsUnknown() {
+		if typed, ok := subjectBindingState(ctx, profile.SubjectBindings, model.SubjectBindings, resolutions, diagnostics); ok {
+			model.SubjectBindings = typed
 			model.SubjectBindingsJSON = types.StringNull()
 		} else {
-			model.SubjectBindingsJSON = types.StringValue("[]")
+			model.SubjectBindings = types.ListNull(subjectBindingObjectType())
+			model.SubjectBindingsJSON = optionalJSONObjectState(bindings, "[]")
 		}
+	} else if bindings == "" || bindings == "null" {
+		model.SubjectBindingsJSON = types.StringValue("[]")
 	} else {
 		model.SubjectBindingsJSON = types.StringValue(bindings)
 	}
 	selectors := strings.TrimSpace(string(profile.ModelSelectors))
-	if selectors == "" || selectors == "null" || selectors == "{}" {
-		if model.ModelSelectorsJSON.IsNull() || model.ModelSelectorsJSON.IsUnknown() {
+	if !model.ModelPatterns.IsNull() || model.ModelSelectorsJSON.IsNull() || model.ModelSelectorsJSON.IsUnknown() {
+		if typed, ok := modelPatternState(ctx, profile.ModelSelectors, diagnostics); ok {
+			model.ModelPatterns = typed
 			model.ModelSelectorsJSON = types.StringNull()
 		} else {
-			model.ModelSelectorsJSON = types.StringValue("{}")
+			model.ModelPatterns = types.SetNull(types.StringType)
+			model.ModelSelectorsJSON = optionalJSONObjectState(selectors, "{}")
 		}
+	} else if selectors == "" || selectors == "null" {
+		model.ModelSelectorsJSON = types.StringValue("{}")
 	} else {
 		model.ModelSelectorsJSON = types.StringValue(selectors)
 	}
@@ -343,6 +495,120 @@ func sameGatewayRoute(prior llmGatewayRoutePlanModel, current llmGatewayRouteAPI
 }
 func routeObjectType() types.ObjectType {
 	return types.ObjectType{AttrTypes: map[string]attr.Type{"id": types.StringType, "provider": types.StringType, "name": types.StringType, "requested_model_pattern": types.StringType, "upstream_model": types.StringType, "api_surface": types.StringType, "strategy": types.StringType, "route_priority": types.Int64Type, "weight": types.Int64Type, "rollout_state": types.StringType, "enforcement_mode": types.StringType, "policy_hooks": types.SetType{ElemType: types.StringType}, "tool_deny_behavior": types.StringType, "config_json": types.StringType}}
+}
+
+func subjectBindingObjectType() types.ObjectType {
+	return types.ObjectType{AttrTypes: map[string]attr.Type{
+		"subject_kind": types.StringType,
+		"subject_name": types.StringType,
+		"subject_id":   types.StringType,
+	}}
+}
+
+func optionalJSONObjectState(value, empty string) types.String {
+	if value == "" || value == "null" {
+		return types.StringValue(empty)
+	}
+	return types.StringValue(value)
+}
+
+func subjectBindingState(ctx context.Context, raw json.RawMessage, prior types.List, resolutions llmGatewaySubjectResolutions, diagnostics *diag.Diagnostics) (types.List, bool) {
+	var bindings []struct {
+		SubjectKind  string   `json:"subjectKind"`
+		SubjectID    string   `json:"subjectId"`
+		SubjectKinds []string `json:"subjectKinds"`
+		SubjectIDs   []string `json:"subjectIds"`
+		AppIDs       []string `json:"appIds"`
+		AgentIDs     []string `json:"agentIds"`
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed != "" && trimmed != "null" {
+		if err := json.Unmarshal(raw, &bindings); err != nil {
+			diagnostics.AddError("Read Forge LLM Gateway subject bindings", err.Error())
+			return types.ListNull(subjectBindingObjectType()), false
+		}
+	}
+	items := make([]llmGatewaySubjectBindingModel, 0)
+	for _, binding := range bindings {
+		if strings.TrimSpace(binding.SubjectKind) != "" && strings.TrimSpace(binding.SubjectID) != "" {
+			items = append(items, typedSubjectBinding(binding.SubjectKind, binding.SubjectID))
+			continue
+		}
+		if len(binding.SubjectKinds) == 1 && len(binding.SubjectIDs) > 0 {
+			for _, subjectID := range binding.SubjectIDs {
+				items = append(items, typedSubjectBinding(binding.SubjectKinds[0], subjectID))
+			}
+			continue
+		}
+		if len(binding.AppIDs) > 0 {
+			for _, subjectID := range binding.AppIDs {
+				items = append(items, typedSubjectBinding("app", subjectID))
+			}
+			continue
+		}
+		if len(binding.AgentIDs) > 0 {
+			for _, subjectID := range binding.AgentIDs {
+				items = append(items, typedSubjectBinding("agent", subjectID))
+			}
+			continue
+		}
+		return types.ListNull(subjectBindingObjectType()), false
+	}
+	var priorItems []llmGatewaySubjectBindingModel
+	if !prior.IsNull() && !prior.IsUnknown() {
+		diagnostics.Append(prior.ElementsAs(ctx, &priorItems, false)...)
+	}
+	for index, item := range items {
+		preserveID := false
+		for _, previous := range priorItems {
+			if previous.SubjectKind.ValueString() == item.SubjectKind.ValueString() && previous.SubjectID.ValueString() == item.SubjectID.ValueString() {
+				preserveID = true
+				break
+			}
+		}
+		if preserveID || !items[index].SubjectName.IsNull() {
+			continue
+		}
+		if name := resolutions.byID[gatewaySubjectResolutionKey(item.SubjectKind.ValueString(), item.SubjectID.ValueString())]; name != "" {
+			items[index].SubjectName = types.StringValue(name)
+			items[index].SubjectID = types.StringNull()
+		}
+	}
+	value, ds := types.ListValueFrom(ctx, subjectBindingObjectType(), items)
+	diagnostics.Append(ds...)
+	return value, !ds.HasError()
+}
+
+func typedSubjectBinding(kind, id string) llmGatewaySubjectBindingModel {
+	return llmGatewaySubjectBindingModel{
+		SubjectKind: types.StringValue(kind),
+		SubjectName: types.StringNull(),
+		SubjectID:   types.StringValue(id),
+	}
+}
+
+func modelPatternState(ctx context.Context, raw json.RawMessage, diagnostics *diag.Diagnostics) (types.Set, bool) {
+	var selectors map[string]json.RawMessage
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed != "" && trimmed != "null" && trimmed != "{}" {
+		if err := json.Unmarshal(raw, &selectors); err != nil {
+			diagnostics.AddError("Read Forge LLM Gateway model selectors", err.Error())
+			return types.SetNull(types.StringType), false
+		}
+	}
+	if len(selectors) > 1 || (len(selectors) == 1 && selectors["modelPatterns"] == nil) {
+		return types.SetNull(types.StringType), false
+	}
+	var patterns []string
+	if value := selectors["modelPatterns"]; value != nil {
+		if err := json.Unmarshal(value, &patterns); err != nil {
+			diagnostics.AddError("Read Forge LLM Gateway model patterns", err.Error())
+			return types.SetNull(types.StringType), false
+		}
+	}
+	value, ds := types.SetValueFrom(ctx, types.StringType, patterns)
+	diagnostics.Append(ds...)
+	return value, !ds.HasError()
 }
 func (r *llmGatewayAccessProfileResource) Delete(ctx context.Context, q resource.DeleteRequest, p *resource.DeleteResponse) {
 	var model llmGatewayAccessProfileModel

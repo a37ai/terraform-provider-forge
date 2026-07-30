@@ -24,11 +24,13 @@ A Forge LLM Gateway access profile and its atomic provider route plan. This is t
 - `data_classes` (Set of String)
 - `description` (String)
 - `enforcement_mode` (String) Policy behavior: monitor records decisions, simulate returns simulated outcomes, enforce changes traffic, and break_glass bypasses enforcement while retaining audit evidence.
-- `model_selectors_json` (String) JSON object using the gateway runtime's native model selector schema.
-- `policy_hooks` (Set of String) Gateway stages evaluated for this profile: prompt, pre_tool_use, post_tool_use, and response.
+- `model_patterns` (Set of String) Requested model names or glob patterns allowed by this profile, such as gpt-5 or claude-\*.
+- `model_selectors_json` (String, Deprecated) Deprecated compatibility input for the gateway model selector JSON object. Use model_patterns.
+- `policy_hooks` (Set of String) Gateway stages evaluated for this profile: prompt, pre_tool_use, and post_tool_use.
 - `route` (Block List) (see [below for nested schema](#nestedblock--route))
-- `state` (String)
-- `subject_bindings_json` (String) JSON array using the gateway runtime's native subject binding schema.
+- `state` (String) Lifecycle state: draft, active, disabled, or archived.
+- `subject_binding` (Block List) A typed gateway principal binding. Use subject_name with an exact customer-visible selector; subject_id is deprecated compatibility only. (see [below for nested schema](#nestedblock--subject_binding))
+- `subject_bindings_json` (String, Deprecated) Deprecated compatibility input for the gateway subject binding JSON array. Use subject_binding blocks.
 
 ### Read-Only
 
@@ -50,10 +52,22 @@ Optional:
 - `config_json` (String) JSON object passed to the native gateway route config.
 - `enforcement_mode` (String) Route policy behavior: monitor, simulate, enforce, or break_glass.
 - `id` (String)
-- `policy_hooks` (Set of String) Gateway stages evaluated on this route: prompt, pre_tool_use, post_tool_use, and response.
+- `policy_hooks` (Set of String) Gateway stages evaluated on this route: prompt, pre_tool_use, and post_tool_use.
 - `rollout_state` (String) Route rollout state: draft, monitor, simulate, enforce, paused, or archived.
 - `route_priority` (Number)
 - `strategy` (String) Route selection strategy: fixed, fallback, weighted, policy, cost, latency, or quality.
 - `tool_deny_behavior` (String) Denied tool behavior: hard_block rejects the request; rewrite_refusal returns a refusal-shaped result.
 - `upstream_model` (String)
 - `weight` (Number)
+  <a id="nestedblock--subject_binding"></a>
+
+### Nested Schema for `subject_binding`
+
+Required:
+
+- `subject_kind` (String) Principal type: user, group, app, service_account, agent, or customer_tenant.
+
+Optional:
+
+- `subject_id` (String, Deprecated) Deprecated stable Forge principal ID compatibility input. Use subject_name.
+- `subject_name` (String) Exact readable selector: user email, group name, app name or slug, service-account name, agent name, or customer-tenant name or slug. Forge rejects missing, inactive, or ambiguous matches.

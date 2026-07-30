@@ -9,6 +9,30 @@ The provider manages policy resources only. Configure `organization_id`,
 `manager_id`, and `manager_instance`; provide the sensitive API token using
 `FORGE_API_TOKEN`.
 
+The provider connects to `https://api.forge.ai` by default. Set
+`FORGE_ENDPOINT` only for a different Forge environment.
+
+## Create a Terraform token
+
+1. In Forge Console, open **Settings → Access tokens → New service account**.
+2. Name it for the Terraform workspace, such as `terraform-staging-policies`.
+3. Choose **Use preset → Terraform policy management**. This selects exactly
+   `policies:read` and `policies:write`.
+4. Keep the suggested **Analyst** role for policy management. Use **Admin** only
+   when the organization requires the policy publishing permission.
+5. Create the account and copy the token immediately; Forge shows it only once.
+6. Set it in the shell running Terraform, without committing it:
+
+   ```sh
+   export FORGE_API_TOKEN='paste-the-token-here'
+   ```
+
+Switch to the organization you intend to manage in Forge Console, then copy the
+value after `/organizations/` in the browser URL. For
+`https://console.forge.ai/organizations/acme_logistics/policies`, set
+`organization_id = "acme_logistics"`. Use the URL key, not the organization
+display name.
+
 `manager_id` and `manager_instance` are stable drift-coordination values. Forge
 also binds ownership to the authenticated service-account principal, so another
 credential cannot impersonate a workspace by copying those values. Protect
@@ -21,7 +45,10 @@ tokens with `policies:read` and `policies:write`.
 - `forge_access_policy`: a bounded `forge.rego.v1` module or native recursive
   conditions, plus Access scope, outcomes, approval, and remediation.
 - `forge_llm_gateway_access_profile`: the native gateway access profile,
-  subject bindings, model selectors, and atomic provider route plan used by the console and runtime.
+  typed subject bindings, model patterns, and atomic provider route plan used by
+  the console and runtime. Select users by email; groups, service accounts, and
+  agents by exact name; apps by name or slug; customer tenants by organization
+  name or URL slug; and providers by exact configured name.
 - `forge_mcp_acl` and `forge_skill_acl`: readable MCP, skill, and subject selectors.
 - `forge_policy_authority`: explicit revision-bound adoption and release.
 

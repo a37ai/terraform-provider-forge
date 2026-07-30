@@ -33,7 +33,7 @@ var canonicalFilterOperators = []string{"eq", "neq", "contains", "starts_with", 
 
 var canonicalFilterUnavailableActions = []string{"allow", "block"}
 
-var canonicalAccessRemediationActions = []string{"clearAuthCookies", "clearCacheStorage", "clearCookies", "clearExtensionStateWhenProven", "clearIndexedDb", "clearServiceWorkers", "clearSiteStorage", "clearStorage", "closeTabOrWindow", "disableLaunchService", "disableLoginItem", "disableManagedExtension", "disableManagedPlugin", "disableManagedServerConfig", "disableManagedToolConfig", "forceTerminate", "gracefulQuit", "killHelperProcess", "managedUninstall", "preventReinstall", "quarantine", "quarantineBinary", "quarantineRuntime", "removeManagedConfigEntry", "removeManagedConfiguration", "removeManagedExtension", "removeManagedPlugin", "removePackageWhenOwned", "removePluginConfigWhenProven", "removeSitePermissions", "revokeTokenWhenProven", "rotateSecretWhenProven", "stopCallerProcessWhenProven", "stopContainerWhenKnown", "stopLocalServerProcess", "stopServer", "terminateRuntime"}
+var canonicalAccessRemediationActions = []string{"clearAuthCookies", "clearCacheStorage", "clearCookies", "clearExtensionStateWhenProven", "clearIndexedDb", "clearServiceWorkers", "clearSiteStorage", "clearStorage", "closeTabOrWindow", "disableAccountWhenProven", "disableLaunchService", "disableLoginItem", "disableManagedExtension", "disableManagedPlugin", "disableManagedServerConfig", "disableManagedToolConfig", "disableOAuthGrantWhenProven", "forceTerminate", "gracefulQuit", "killHelperProcess", "managedUninstall", "uninstallApp", "preventManagedPluginReinstall", "preventManagedServerReinstall", "preventManagedToolReinstall", "preventReinstall", "quarantine", "quarantineBinary", "quarantineRuntime", "removeManagedConfigEntry", "removeManagedConfiguration", "removeManagedExtension", "removeManagedPlugin", "removePackageWhenOwned", "removePluginConfigWhenProven", "removeSitePermissions", "repairApprovedExtension", "repairManagedPlugin", "repairManagedServerConfig", "repairManagedToolConfig", "recordOnly", "revokeTokenWhenProven", "rotateSecretWhenProven", "stopCallerProcessWhenProven", "stopContainerWhenKnown", "stopLocalServerProcess", "stopServer", "terminateRuntime"}
 
 var canonicalSkillEffects = []string{"allow", "block"}
 
@@ -120,7 +120,7 @@ var canonicalAccessFieldValueOptions = map[string][]string{"account.access_state
 	"classification.state":         {"known_ai", "candidate_ai", "known_not_ai", "uncertain", "no_catalog_match"},
 	"local_model.governance_state": {"approved", "unknown", "disallowed"},
 	"local_model.proof_level":      {"request-declared", "running", "available", "unknown"},
-	"route.posture":                {"unmanaged_route", "unknown_route", "uncontrolled", "managed_route", "delegated_control_route", "approved_route", "forbidden_route"},
+	"route.posture":                {"managed_route", "delegated_control_route", "unmanaged_direct_route", "approved_asset_control_gap", "unknown_route", "risky_route", "denied_route", "exception_route"},
 	"source.health_state":          {"active", "degraded", "stale", "missing", "disabled", "unhealthy"}}
 var canonicalOperatorsByFieldType = map[string][]string{"boolean": {"eq", "neq", "exists"},
 	"content":    {"eq", "neq", "contains", "starts_with", "ends_with", "matches", "exists"},

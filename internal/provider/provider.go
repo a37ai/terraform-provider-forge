@@ -15,6 +15,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+const defaultForgeEndpoint = "https://api.forge.ai"
+
 type forgeProvider struct{ version string }
 
 type providerModel struct {
@@ -51,13 +53,7 @@ func (p *forgeProvider) Configure(ctx context.Context, request provider.Configur
 	if response.Diagnostics.HasError() {
 		return
 	}
-	endpoint := config.Endpoint.ValueString()
-	if endpoint == "" {
-		endpoint = os.Getenv("FORGE_ENDPOINT")
-	}
-	if endpoint == "" {
-		endpoint = "https://api.forge.security"
-	}
+	endpoint := resolveForgeEndpoint(config.Endpoint.ValueString())
 	token := config.APIToken.ValueString()
 	if token == "" {
 		token = os.Getenv("FORGE_API_TOKEN")
@@ -79,3 +75,13 @@ func (p *forgeProvider) Resources(_ context.Context) []func() resource.Resource 
 	return []func() resource.Resource{newContentPolicyResource, newAccessPolicyResource, newLLMGatewayAccessProfileResource, newMCPACLResource, newSkillACLResource, newPolicyAuthorityResource}
 }
 func (p *forgeProvider) DataSources(context.Context) []func() datasource.DataSource { return nil }
+
+func resolveForgeEndpoint(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	if endpoint := os.Getenv("FORGE_ENDPOINT"); endpoint != "" {
+		return endpoint
+	}
+	return defaultForgeEndpoint
+}

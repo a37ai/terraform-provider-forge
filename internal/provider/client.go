@@ -158,7 +158,7 @@ func NewClient(endpoint, organizationID, token, managerID, managerInstance, user
 		return nil, errors.New("endpoint must use HTTPS except for localhost")
 	}
 	if organizationID == "" || token == "" || managerID == "" || managerInstance == "" {
-		return nil, errors.New("organization_id, api_token, manager_id, and manager_instance are required")
+		return nil, errors.New("organization_id, api_token, manager_id, and manager_instance are required; copy organization_id from the Console URL, provide api_token via FORGE_API_TOKEN or the sensitive provider field, and choose stable manager_id and manager_instance labels for this Terraform workspace")
 	}
 	if timeout <= 0 {
 		timeout = 30 * time.Second
