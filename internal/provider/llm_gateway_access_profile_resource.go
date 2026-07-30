@@ -193,7 +193,7 @@ func (r *llmGatewayAccessProfileResource) Schema(_ context.Context, _ resource.S
 				"openai_batches", "openai_fine_tuning", "openai_moderations", "openai_realtime", "rerank",
 				"provider_passthrough", "bedrock_converse", "gemini_generate_content", "custom",
 			)}},
-			"strategy":       schema.StringAttribute{Optional: true, Computed: true, Description: "Route selection strategy: fixed, fallback, weighted, policy, cost, latency, or quality.", Validators: []validator.String{stringvalidator.OneOf("fixed", "fallback", "weighted", "policy", "cost", "latency", "quality")}},
+			"strategy":       schema.StringAttribute{Optional: true, Computed: true, Description: "Selection strategy within this priority tier: fixed, weighted, policy, cost, or latency. Configure later priority tiers for fallback.", Validators: []validator.String{stringvalidator.OneOf("fixed", "weighted", "policy", "cost", "latency")}},
 			"route_priority": schema.Int64Attribute{Optional: true, Computed: true}, "weight": schema.Int64Attribute{Optional: true, Computed: true},
 			"rollout_state":    schema.StringAttribute{Optional: true, Computed: true, Description: "Route rollout state: draft, monitor, simulate, enforce, paused, or archived.", Validators: []validator.String{stringvalidator.OneOf("draft", "monitor", "simulate", "enforce", "paused", "archived")}},
 			"enforcement_mode": schema.StringAttribute{Optional: true, Computed: true, Description: "Route policy behavior: monitor, simulate, enforce, or break_glass.", Validators: []validator.String{stringvalidator.OneOf("monitor", "simulate", "enforce", "break_glass")}},
