@@ -12,7 +12,7 @@ terraform {
 }
 
 provider "forge" {
-  organization_id  = "org.acme"
+  organization_id  = "org_..."
   manager_id       = "security-platform"
   manager_instance = "production"
   # api_token may be supplied with FORGE_API_TOKEN
@@ -64,6 +64,29 @@ resource "forge_skill_acl" "deploy" {
 }
 ```
 
+## Credentials
+
+Create a service account in **Forge Console → Settings → Access tokens → New
+service account**. Choose **Use preset → Terraform policy management** to get
+the exact `policies:read` and `policies:write` scopes, then copy the token once
+when Forge displays it. Export it only in the Terraform shell:
+
+```sh
+export FORGE_API_TOKEN='paste-the-token-here'
+```
+
+The provider connects to `https://api.forge.ai` by default. Set
+`FORGE_ENDPOINT` only for a different Forge environment.
+
+In Forge Console, switch to the organization you intend to manage and open any
+organization page. Copy `organization_id` from the browser URL: for
+`https://console.forge.ai/organizations/acme_logistics/policies`, use
+`acme_logistics`. This is the organization URL key, not its display name.
+
+`manager_id` and `manager_instance` are stable, user-chosen labels for the
+Terraform workspace (not credentials). Keep them unchanged across runs; for
+example, use `terraform-staging` and `staging`.
+
 If local development state used the former provider address, update it once
 before planning:
 
@@ -76,10 +99,17 @@ Resources: `forge_content_policy`, `forge_access_policy`,
 `forge_policy_authority` is the explicit, revision-bound
 adoption/release resource for an existing console-authored policy. The first two
 accept exactly one `forge.rego.v1` module or a native recursive HCL
-`conditions` object. The LLM gateway resource mirrors the native staging access
-profile, subject-binding, model-selector, and atomic route-plan API; it does not
-create a second compiled gateway policy. MCP ACLs and skill ACLs expose typed
-attributes and enums.
+`conditions` object. The LLM gateway resource mirrors the native access profile
+and atomic route-plan API; it does not create a second compiled gateway policy.
+Use `model_patterns` and typed `subject_binding` blocks. Select users by email;
+groups, service accounts, and agents by exact name; apps by exact name or slug;
+and customer tenants by exact organization name or URL slug. Route providers
+are selected by exact configured provider name. Forge resolves these references
+within the configured organization and rejects missing, inactive, or ambiguous
+matches. `subject_id` and the v0.1.0 `subject_bindings_json` and
+`model_selectors_json` attributes remain deprecated compatibility inputs, not
+the normal authoring path. MCP ACLs and skill ACLs expose typed attributes and
+enums.
 
 The Rego policy resources expose typed scope sets, family action enums,
 Content evaluation stages, approvals, every redaction strategy, structured

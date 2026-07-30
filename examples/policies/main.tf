@@ -16,12 +16,16 @@ provider "forge" {
 }
 
 resource "forge_llm_gateway_access_profile" "approved_models" {
-  id                    = "approved-models"
-  name                  = "Approved models"
-  state                 = "active"
-  enforcement_mode      = "enforce"
-  subject_bindings_json = jsonencode([{ subjectType = "group", subjectId = "group.engineering" }])
-  model_selectors_json  = jsonencode({ modelPatterns = ["claude-sonnet", "gpt-5"] })
+  id               = "approved-models"
+  name             = "Approved models"
+  state            = "active"
+  enforcement_mode = "enforce"
+  model_patterns   = ["claude-sonnet", "gpt-5"]
+
+  subject_binding {
+    subject_kind = "service_account"
+    subject_name = "Production agent"
+  }
 
   route {
     provider                = "OpenAI"

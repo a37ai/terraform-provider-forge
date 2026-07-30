@@ -386,6 +386,10 @@ func (r *regoPolicyResource) Delete(ctx context.Context, q resource.DeleteReques
 
 func (r *regoPolicyResource) ImportState(ctx context.Context, q resource.ImportStateRequest, p *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), q, p)
+	// Imported resources have no prior plan binding. Persist the provider's
+	// empty sentinel so the first plan can converge without a computed
+	// null-to-empty update.
+	p.Diagnostics.Append(p.State.SetAttribute(ctx, path.Root("validation_token"), "")...)
 }
 
 func (r *regoPolicyResource) apply(ctx context.Context, m regoPolicyModel, revision int64, diagnostics *diag.Diagnostics, save func(regoPolicyModel)) {

@@ -174,6 +174,7 @@ func (r *mcpACLResource) Delete(ctx context.Context, q resource.DeleteRequest, p
 }
 func (r *mcpACLResource) ImportState(ctx context.Context, q resource.ImportStateRequest, p *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), q, p)
+	p.Diagnostics.Append(p.State.SetAttribute(ctx, path.Root("validation_token"), "")...)
 }
 func (r *mcpACLResource) apply(ctx context.Context, m mcpACLModel, rev int64, d *diag.Diagnostics, save func(mcpACLModel)) {
 	def, sourceRef := r.build(ctx, m, d)
