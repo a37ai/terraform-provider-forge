@@ -17,15 +17,16 @@ A Forge skill access-control policy.
 ### Required
 
 - `effect` (String)
-- `id` (String) Stable Forge policy identifier.
+- `id` (String) Stable ACL identifier. Changing it replaces the resource.
 - `skill` (String) Exact skill name or slug.
 
 ### Optional
 
 - `enabled` (Boolean)
+- `everyone` (Boolean) Apply this ACL to everyone. Cannot be combined with users or groups.
 - `group_directory_ids` (Map of String) Optional map from a configured group name to a Forge directory ID, used only to disambiguate duplicate exact matches.
 - `groups` (Set of String) Exact group names.
-- `user_directory_ids` (Map of String) Optional map from a configured user email to a Forge directory ID, used only to disambiguate duplicate exact matches.
+- `user_directory_ids` (Map of String) Optional map from a configured user name to a Forge directory ID, used only to disambiguate duplicate exact matches.
 - `users` (Set of String) Exact user emails.
 
 ### Read-Only

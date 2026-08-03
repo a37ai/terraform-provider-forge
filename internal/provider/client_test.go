@@ -225,7 +225,7 @@ func TestClientNegotiatesPolicyContract(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/headless/v1/organizations/org/policy-contracts/capabilities" {
 			t.Fatalf("unexpected negotiation request: %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = fmt.Fprint(w, `{"policySchemaVersion":"forge.policy.families.v1","regoLanguageVersion":"forge.rego.v1","regoCompilerFingerprint":"fingerprint","terraformPolicyProtocol":"forge.terraform.policy.v1","terraformOwnershipBinding":"service_account_principal"}`)
+		_, _ = fmt.Fprint(w, `{"policySchemaVersion":"forge.policy.families.v1","regoLanguageVersion":"forge.rego.v1","regoCompilerFingerprint":"fingerprint","terraformPolicyProtocol":"forge.terraform.policy.v1","terraformGatewayProtocol":"forge.terraform.llm-gateway-plan.v1","terraformOwnershipBinding":"service_account_principal"}`)
 	}))
 	defer server.Close()
 	client, _ := NewClient(server.URL, "org", "token", "manager", "instance", "test", time.Second)
@@ -298,5 +298,47 @@ func TestClientRequestsAuthoritativePolicyPlanBinding(t *testing.T) {
 	result, err := client.ValidatePolicyPlan(context.Background(), "content", map[string]any{"id": "p"}, map[string]any{"tool": "terraform"}, 7)
 	if err != nil || result.ValidationToken != "signed-token" {
 		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func TestClientRefreshesExpiringPolicyPlanBinding(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"valid": true, "validationToken": fmt.Sprintf("token-%d", requests), "schemaVersion": "forge.policy.families.v1",
+			"compilerFingerprint": "compiler", "expiresAt": time.Now().Add(30 * time.Second),
+		})
+	}))
+	defer server.Close()
+	client, _ := NewClient(server.URL, "org", "token", "manager", "instance", "test", time.Second)
+	for range 2 {
+		if _, err := client.ValidatePolicyPlan(context.Background(), "content", map[string]any{"id": "p"}, map[string]any{}, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("expiring plan binding requests=%d, want 2", requests)
+	}
+}
+
+func TestClientReusesStablePolicyPlanBinding(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"valid": true, "validationToken": "stable", "schemaVersion": "forge.policy.families.v1",
+			"compilerFingerprint": "compiler", "expiresAt": time.Now().Add(10 * time.Minute),
+		})
+	}))
+	defer server.Close()
+	client, _ := NewClient(server.URL, "org", "token", "manager", "instance", "test", time.Second)
+	for range 2 {
+		if _, err := client.ValidatePolicyPlan(context.Background(), "content", map[string]any{"id": "p"}, map[string]any{}, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("stable plan binding requests=%d, want 1", requests)
 	}
 }

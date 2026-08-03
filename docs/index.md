@@ -1,61 +1,61 @@
 ---
 page_title: 'Forge Provider'
-description: 'Manage Forge policies with exclusive Terraform authority.'
+description: 'Manage Forge policies and LLM Gateway profiles with exclusive Terraform authority.'
 ---
 
 # Forge provider
 
-The provider manages policy resources only. Configure `organization_id`,
-`manager_id`, and `manager_instance`; provide the sensitive API token using
-`FORGE_API_TOKEN`.
+The provider manages Forge policy resources and LLM Gateway access profiles.
+Read-only data sources resolve customer-visible users, groups, agents, AI
+products, integrations, registry objects, and gateway providers without making
+customers copy opaque Forge IDs.
 
-The provider connects to `https://api.forge.ai` by default. Set
-`FORGE_ENDPOINT` only for a different Forge environment.
-
-## Create a Terraform token
+## Configure the provider
 
 1. In Forge Console, open **Settings → Access tokens → New service account**.
-2. Name it for the Terraform workspace, such as `terraform-staging-policies`.
-3. Choose **Use preset → Terraform policy management**. This selects exactly
-   `policies:read` and `policies:write`.
-4. Keep the suggested **Analyst** role for policy management. Use **Admin** only
-   when the organization requires the policy publishing permission.
-5. Create the account and copy the token immediately; Forge shows it only once.
-6. Set it in the shell running Terraform, without committing it:
+2. Choose **Use preset → Terraform policy management**.
+3. Copy the token when Forge displays it and export it as `FORGE_API_TOKEN`.
+4. Copy the organization ID from the Console URL after `/organizations/`.
+5. Pick stable `manager_id` and `manager_instance` values for this workspace.
 
-   ```sh
-   export FORGE_API_TOKEN='paste-the-token-here'
-   ```
+```hcl
+provider "forge" {
+  organization_id  = "org_..."
+  manager_id        = "security-policy-repository"
+  manager_instance  = "production"
+}
+```
 
-Switch to the organization you intend to manage in Forge Console, then copy the
-value after `/organizations/` in the browser URL. For
-`https://console.forge.ai/organizations/acme_logistics/policies`, set
-`organization_id = "acme_logistics"`. Use the URL key, not the organization
-display name.
-
-`manager_id` and `manager_instance` are stable drift-coordination values. Forge
-also binds ownership to the authenticated service-account principal, so another
-credential cannot impersonate a workspace by copying those values. Protect
-tokens with `policies:read` and `policies:write`.
+The provider connects to `https://api.forge.ai` by default. Set
+`FORGE_ENDPOINT` only for another Forge environment. Keep the manager values
+stable: Forge binds ownership to them and to the authenticated service-account
+principal, so copying manager values to another credential does not grant
+access.
 
 ## Resources
 
-- `forge_content_policy`: a bounded `forge.rego.v1` module or native recursive
-  conditions, plus Content scope, stages, outcomes, approvals, redaction, and filtering.
-- `forge_access_policy`: a bounded `forge.rego.v1` module or native recursive
-  conditions, plus Access scope, outcomes, approval, and remediation.
-- `forge_llm_gateway_access_profile`: the native gateway access profile,
-  typed subject bindings, model patterns, and atomic provider route plan used by
-  the console and runtime. Select users by email; groups, service accounts, and
-  agents by exact name; apps by name or slug; customer tenants by organization
-  name or URL slug; and providers by exact configured name.
-- `forge_mcp_acl` and `forge_skill_acl`: readable MCP, skill, and subject selectors.
-- `forge_policy_authority`: explicit revision-bound adoption and release.
+- `forge_content_policy` and `forge_access_policy` manage typed native or
+  `forge.rego.v1` policies.
+- `forge_mcp_acl` and `forge_skill_acl` manage readable registry ACLs.
+- `forge_llm_gateway_access_profile` atomically manages model patterns and
+  provider routes. Caller assignment is intentionally separate: after apply,
+  create a gateway key in **LLM Gateway → Gateway keys** and select the profile.
+- `forge_policy_authority` explicitly adopts or releases an existing
+  Console-managed policy at a known revision.
 
-All policy IDs are stable Forge policy keys. References are exact emails,
-names, labels, or slugs and are resolved server-side; zero or multiple matches
-fail the apply. Forge stores canonical internal bindings and retains bounded
-selector provenance so refresh does not replace readable configuration with machine IDs.
+Terraform-owned objects show their manager in Console and cannot be edited or
+deleted there. Existing Console gateway profiles require
+`adopt_existing = true`; ordinary creates do not.
+
+## Data sources
+
+`forge_user`, `forge_group`, `forge_agent`, `forge_ai_product`,
+`forge_integration`, `forge_mcp_server`, `forge_mcp_tool`, `forge_skill`, and
+`forge_gateway_provider` each resolve exactly one organization-scoped,
+customer-visible selector. Missing and ambiguous matches fail clearly.
+
+`forge_rego_test` compiles and evaluates a module against native HCL input
+through Forge's authoritative compiler for use in `terraform test`.
 
 <!-- schema generated by tfplugindocs -->
 

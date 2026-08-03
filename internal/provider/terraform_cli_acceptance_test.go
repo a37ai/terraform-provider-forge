@@ -2,6 +2,7 @@ package provider
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type acceptanceStoredPolicy struct {
@@ -56,7 +58,7 @@ func TestTerraformCLIFullLifecycle(t *testing.T) {
 		path := strings.TrimPrefix(r.URL.Path, base)
 		switch {
 		case r.Method == http.MethodGet && path == "policy-contracts/capabilities":
-			_, _ = w.Write([]byte(`{"policySchemaVersion":"forge.policy.families.v1","regoLanguageVersion":"forge.rego.v1","regoCompilerFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","terraformPolicyProtocol":"forge.terraform.policy.v1","terraformOwnershipBinding":"service_account_principal"}`))
+			_, _ = w.Write([]byte(`{"policySchemaVersion":"forge.policy.families.v1","regoLanguageVersion":"forge.rego.v1","regoCompilerFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","terraformPolicyProtocol":"forge.terraform.policy.v1","terraformGatewayProtocol":"forge.terraform.llm-gateway-plan.v1","terraformOwnershipBinding":"service_account_principal"}`))
 		case r.Method == http.MethodPost && path == "policy-plans/validate":
 			var body struct {
 				Definition       map[string]any `json:"definition"`
@@ -216,7 +218,7 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/headless/v1/organizations/org.enterprise/")
 		switch {
 		case r.Method == http.MethodGet && path == "policy-contracts/capabilities":
-			_, _ = w.Write([]byte(`{"policySchemaVersion":"forge.policy.families.v1","regoLanguageVersion":"forge.rego.v1","regoCompilerFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","terraformPolicyProtocol":"forge.terraform.policy.v1","terraformOwnershipBinding":"service_account_principal"}`))
+			_, _ = w.Write([]byte(`{"policySchemaVersion":"forge.policy.families.v1","regoLanguageVersion":"forge.rego.v1","regoCompilerFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","terraformPolicyProtocol":"forge.terraform.policy.v1","terraformGatewayProtocol":"forge.terraform.llm-gateway-plan.v1","terraformOwnershipBinding":"service_account_principal"}`))
 		case r.Method == http.MethodPost && path == "policy-code/rego/validate":
 			var body struct {
 				Module string `json:"module"`
@@ -273,56 +275,48 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 			authority.ManagerInstance = ""
 			authorityReleases++
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodPost && path == "llm-gateway/subjects/resolve":
-			var body struct {
-				Subjects []struct {
-					Kind string `json:"kind"`
-					Name string `json:"name"`
-				} `json:"subjects"`
+		case r.Method == http.MethodPost && path == "llm-gateway/plans/validate":
+			var plan struct {
+				ExpectedVersion int64 `json:"expectedVersion"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, `{"error":"invalid subject resolution request"}`, http.StatusBadRequest)
+			if err := json.NewDecoder(r.Body).Decode(&plan); err != nil {
+				http.Error(w, `{"error":"invalid gateway plan"}`, http.StatusBadRequest)
 				return
 			}
-			items := make([]map[string]string, 0, len(body.Subjects))
-			for _, subject := range body.Subjects {
-				if subject.Kind != "service_account" || subject.Name != "Production agent" {
-					http.Error(w, `{"error":"unknown test subject"}`, http.StatusUnprocessableEntity)
-					return
-				}
-				items = append(items, map[string]string{
-					"kind":      subject.Kind,
-					"name":      subject.Name,
-					"subjectId": "lgwsa_production",
-				})
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+			claims, _ := json.Marshal(map[string]any{"expectedVersion": plan.ExpectedVersion})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"valid": true, "validationToken": base64.RawURLEncoding.EncodeToString(claims) + ".signature", "planSha256": strings.Repeat("a", 64),
+				"schemaVersion": "forge.terraform.llm-gateway-plan.v1", "expiresAt": time.Now().Add(10 * time.Minute),
+			})
 		case r.Method == http.MethodPost && path == "llm-gateway/access-profiles/save":
 			var body struct {
-				Profile map[string]any `json:"profile"`
-				Routes  []any          `json:"routes"`
+				Profile         map[string]any `json:"profile"`
+				Routes          []any          `json:"routes"`
+				ExpectedVersion int            `json:"expectedVersion"`
+				ValidationToken string         `json:"validationToken"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, `{"error":"invalid gateway profile"}`, http.StatusBadRequest)
 				return
 			}
-			if len(body.Profile["policyHooks"].([]any)) != 3 || len(body.Routes) != 1 || len(body.Routes[0].(map[string]any)["policyHooks"].([]any)) != 3 {
+			if body.ValidationToken == "" || len(body.Profile["policyHooks"].([]any)) != 3 || len(body.Routes) != 1 || len(body.Routes[0].(map[string]any)["policyHooks"].([]any)) != 3 {
 				http.Error(w, fmt.Sprintf(`{"error":"gateway hooks were not preserved","profile":%q,"routes":%q}`, body.Profile, body.Routes), http.StatusBadRequest)
 				return
 			}
 			mu.Lock()
 			gatewayProfile = body.Profile
 			gatewayProfile["version"] = float64(1)
+			gatewayProfile["managementMode"] = "terraform"
+			gatewayProfile["managerId"] = "security-policy-repository"
+			gatewayProfile["managerInstance"] = "production"
 			gatewayRoutes = body.Routes
 			for index, rawRoute := range gatewayRoutes {
 				route, _ := rawRoute.(map[string]any)
-				if route["providerName"] != "Test OpenAI" {
-					http.Error(w, `{"error":"provider name was not preserved"}`, http.StatusBadRequest)
+				if route["providerId"] != "lgwp_test" || route["trafficPercentage"] == nil {
+					http.Error(w, `{"error":"canonical provider route fields were not preserved"}`, http.StatusBadRequest)
 					mu.Unlock()
 					return
 				}
-				delete(route, "providerName")
-				route["providerId"] = "lgwp_test"
 				route["id"] = fmt.Sprintf("lgwr_test_%d", index)
 				route["accessProfileId"] = gatewayProfile["id"]
 			}
@@ -339,6 +333,10 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 			mu.Unlock()
 			_ = json.NewEncoder(w).Encode(response)
 		case r.Method == http.MethodDelete && strings.HasPrefix(path, "llm-gateway/access-profiles/"):
+			if r.URL.Query().Get("expectedVersion") == "" {
+				http.Error(w, `{"error":"expectedVersion is required"}`, http.StatusBadRequest)
+				return
+			}
 			mu.Lock()
 			gatewayProfile, gatewayRoutes = nil, nil
 			deletes++
@@ -481,6 +479,68 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 	defer mu.Unlock()
 	if len(stored) != 0 || gatewayProfile != nil || writes != 24 || deletes != 16 || authority.ManagementMode != "forge" || authority.ManagerID != "" || authority.ManagerInstance != "" || authorityClaims != 1 || authorityReleases != 1 {
 		t.Fatalf("all-resource lifecycle stores=%d writes=%d writeKeys=%+v deletes=%d authority=%+v claims=%d releases=%d", len(stored), writes, writeKeys, deletes, authority, authorityClaims, authorityReleases)
+	}
+}
+
+func TestTerraformCLIRejectsRemovedGatewaySyntaxBeforeAPIMutation(t *testing.T) {
+	terraform := strings.TrimSpace(os.Getenv("FORGE_TERRAFORM_CLI"))
+	if terraform == "" {
+		t.Skip("set FORGE_TERRAFORM_CLI to a Terraform or OpenTofu executable")
+	}
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	providerBinary := filepath.Join(binDir, "terraform-provider-forge")
+	runAcceptanceCommand(t, "go", []string{"build", "-o", providerBinary, "./tools/terraform-provider-forge"}, repositoryRoot(t), nil)
+	rc := filepath.Join(root, "terraform.rc")
+	if err := os.WriteFile(rc, []byte(fmt.Sprintf("provider_installation {\n  dev_overrides {\n    \"a37ai/forge\" = %q\n  }\n  direct {}\n}\n", binDir)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"TF_CLI_CONFIG_FILE=" + rc, "TF_IN_AUTOMATION=1", "CHECKPOINT_DISABLE=1"}
+	cases := map[string]string{
+		"subject_bindings_json": `subject_bindings_json = "{}"`,
+		"model_selectors_json":  `model_selectors_json = "{}"`,
+		"subject_binding": `subject_binding {
+    subject_kind = "group"
+    subject_id   = "Engineering"
+  }`,
+		"route_weight": `route {
+    provider                = "OpenAI"
+    name                    = "Primary"
+    requested_model_pattern = "gpt-*"
+    api_surface             = "openai_chat_completions"
+    weight                  = 100
+  }`,
+	}
+	for name, removedSyntax := range cases {
+		t.Run(name, func(t *testing.T) {
+			work := t.TempDir()
+			hcl := fmt.Sprintf(`terraform {
+  required_providers { forge = { source = "a37ai/forge" } }
+}
+provider "forge" {
+  endpoint         = "https://api.invalid"
+  organization_id = "org.acceptance"
+  api_token        = "unused"
+  manager_id       = "security-repository"
+  manager_instance = "production"
+}
+resource "forge_llm_gateway_access_profile" "test" {
+  id   = "removed-syntax"
+  name = "Removed syntax"
+  %s
+}
+`, removedSyntax)
+			if err := os.WriteFile(filepath.Join(work, "main.tf"), []byte(hcl), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			output := runAcceptanceCommandExpectExitCode(t, terraform, []string{"validate", "-no-color"}, work, env, 1)
+			if !strings.Contains(output, "Unsupported argument") && !strings.Contains(output, "Unsupported block type") {
+				t.Fatalf("removed syntax was not rejected by the provider schema:\n%s", output)
+			}
+		})
 	}
 }
 

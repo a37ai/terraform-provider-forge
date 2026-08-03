@@ -101,15 +101,20 @@ adoption/release resource for an existing console-authored policy. The first two
 accept exactly one `forge.rego.v1` module or a native recursive HCL
 `conditions` object. The LLM gateway resource mirrors the native access profile
 and atomic route-plan API; it does not create a second compiled gateway policy.
-Use `model_patterns` and typed `subject_binding` blocks. Select users by email;
-groups, service accounts, and agents by exact name; apps by exact name or slug;
-and customer tenants by exact organization name or URL slug. Route providers
-are selected by exact configured provider name. Forge resolves these references
-within the configured organization and rejects missing, inactive, or ambiguous
-matches. `subject_id` and the v0.1.0 `subject_bindings_json` and
-`model_selectors_json` attributes remain deprecated compatibility inputs, not
-the normal authoring path. MCP ACLs and skill ACLs expose typed attributes and
-enums.
+Use `model_patterns`; route providers are selected by exact configured display
+name and resolved to canonical IDs by Forge. Runtime identity and profile
+assignment belong to gateway keys, created after apply in **Forge Console → LLM
+Gateway → Gateway keys**. Profiles do not contain subject bindings. Existing
+Console profiles require `adopt_existing = true`; adoption and the first update
+are one version-checked transaction. MCP ACLs and skill ACLs expose typed
+attributes and enums.
+
+Discovery data sources are `forge_user`, `forge_group`, `forge_agent`,
+`forge_ai_product`, `forge_integration`, `forge_mcp_server`, `forge_mcp_tool`,
+`forge_skill`, and `forge_gateway_provider`. Each resolves exactly one readable
+selector and fails on missing or ambiguous results. `forge_rego_test` evaluates
+a module against native HCL input through Forge's authoritative compiler for
+use in `terraform test`.
 
 The Rego policy resources expose typed scope sets, family action enums,
 Content evaluation stages, approvals, every redaction strategy, structured
