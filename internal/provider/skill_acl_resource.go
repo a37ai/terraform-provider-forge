@@ -23,6 +23,7 @@ type skillACLModel struct {
 	ID                types.String `tfsdk:"id"`
 	Skill             types.String `tfsdk:"skill"`
 	Enabled           types.Bool   `tfsdk:"enabled"`
+	Everyone          types.Bool   `tfsdk:"everyone"`
 	Users             types.Set    `tfsdk:"users"`
 	UserDirectoryIDs  types.Map    `tfsdk:"user_directory_ids"`
 	Groups            types.Set    `tfsdk:"groups"`
@@ -51,7 +52,7 @@ func (r *skillACLResource) Schema(_ context.Context, _ resource.SchemaRequest, p
 	nonempty := []validator.String{stringvalidator.LengthAtLeast(1)}
 	p.Schema = schema.Schema{Description: "A Forge skill access-control policy.", Attributes: map[string]schema.Attribute{
 		"id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Validators: nonempty}, "skill": schema.StringAttribute{Required: true, Description: "Exact skill name or slug.", Validators: nonempty},
-		"enabled": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)}, "users": optionalSubjectSetAttribute("Exact user emails."), "user_directory_ids": directoryQualifierAttribute("user"),
+		"enabled": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)}, "everyone": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Apply this ACL to everyone. Cannot be combined with users or groups."}, "users": optionalSubjectSetAttribute("Exact user emails."), "user_directory_ids": directoryQualifierAttribute("user"),
 		"groups": optionalSubjectSetAttribute("Exact group names."), "group_directory_ids": directoryQualifierAttribute("group"), "effect": schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf(canonicalSkillEffects...)}},
 		"current_revision": schema.Int64Attribute{Computed: true}, "definition_sha256": schema.StringAttribute{Computed: true}, "validation_token": schema.StringAttribute{Computed: true, Sensitive: true},
 	}}
@@ -149,6 +150,7 @@ func (r *skillACLResource) Read(ctx context.Context, q resource.ReadRequest, p *
 	m.ID = types.StringValue(stringFrom(definition["id"]))
 	m.Skill = types.StringValue(stringFrom(selected(selectors, definition, "skillId")))
 	m.Enabled = types.BoolValue(boolFrom(definition["enabled"]))
+	m.Everyone = types.BoolValue(boolFrom(subjects["everyone"]))
 	m.Users, m.UserDirectoryIDs = qualifiedSelectorState(ctx, selected(subjectSelectors, subjects, "users"), &p.Diagnostics)
 	m.Groups, m.GroupDirectoryIDs = qualifiedSelectorState(ctx, selected(subjectSelectors, subjects, "groups"), &p.Diagnostics)
 	m.Effect = types.StringValue(stringFrom(definition["effect"]))
@@ -176,7 +178,12 @@ func (r *skillACLResource) apply(ctx context.Context, m skillACLModel, rev int64
 	if d.HasError() {
 		return
 	}
-	body := map[string]any{"definition": definition, "expectedRevision": rev, "sourceRef": sourceRef, "validationToken": m.ValidationToken.ValueString()}
+	validation, err := r.client.ValidatePolicyPlan(ctx, "skill_acl", definition, sourceRef, rev)
+	if err != nil {
+		d.AddError("Refresh Forge skill ACL plan validation", err.Error())
+		return
+	}
+	body := map[string]any{"definition": definition, "expectedRevision": rev, "sourceRef": sourceRef, "validationToken": validation.ValidationToken}
 	method, target := http.MethodPost, "skill-acls"
 	if rev > 0 {
 		method, target = http.MethodPut, target+"/"+url.PathEscape(m.ID.ValueString())
@@ -198,8 +205,13 @@ func (r *skillACLResource) build(ctx context.Context, m skillACLModel, d *diag.D
 	if d.HasError() {
 		return nil, nil
 	}
-	if len(users)+len(groups) == 0 {
-		d.AddError("Empty skill ACL subjects", "At least one user or group is required")
+	everyone := m.Everyone.ValueBool()
+	if !everyone && len(users)+len(groups) == 0 {
+		d.AddError("Empty skill ACL subjects", "Set everyone = true or configure at least one user or group")
+		return nil, nil
+	}
+	if everyone && len(users)+len(groups) > 0 {
+		d.AddError("Conflicting skill ACL subjects", "everyone cannot be combined with users or groups")
 		return nil, nil
 	}
 	userSelectors := qualifiedSelectorValues(ctx, m.Users, m.UserDirectoryIDs, "user", d)
@@ -208,6 +220,9 @@ func (r *skillACLResource) build(ctx context.Context, m skillACLModel, d *diag.D
 		return nil, nil
 	}
 	subjects := map[string]any{}
+	if everyone {
+		subjects["everyone"] = true
+	}
 	if len(users) > 0 {
 		subjects["users"] = users
 	}

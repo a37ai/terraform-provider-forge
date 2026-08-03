@@ -43,12 +43,25 @@ type Client struct {
 }
 
 type RegoValidation struct {
-	Valid               bool   `json:"valid"`
-	LanguageVersion     string `json:"languageVersion"`
-	OPAVersion          string `json:"opaVersion"`
-	SourceSHA           string `json:"sourceSha256"`
-	CompilerFingerprint string `json:"compilerFingerprint"`
-	ArtifactFingerprint string `json:"artifactFingerprint"`
+	Valid               bool             `json:"valid"`
+	LanguageVersion     string           `json:"languageVersion"`
+	OPAVersion          string           `json:"opaVersion"`
+	SourceSHA           string           `json:"sourceSha256"`
+	CompilerFingerprint string           `json:"compilerFingerprint"`
+	ArtifactFingerprint string           `json:"artifactFingerprint"`
+	Result              *RegoMatchResult `json:"result,omitempty"`
+}
+
+type RegoMatchResult struct {
+	Matched    bool   `json:"matched"`
+	ReasonCode string `json:"reasonCode"`
+}
+
+type PolicyReference struct {
+	Kind      string  `json:"kind"`
+	ID        string  `json:"id"`
+	Selector  string  `json:"selector"`
+	Qualifier *string `json:"qualifier,omitempty"`
 }
 
 type PolicyCapabilities struct {
@@ -56,16 +69,37 @@ type PolicyCapabilities struct {
 	RegoLanguageVersion       string `json:"regoLanguageVersion"`
 	RegoCompilerFingerprint   string `json:"regoCompilerFingerprint"`
 	TerraformPolicyProtocol   string `json:"terraformPolicyProtocol"`
+	TerraformGatewayProtocol  string `json:"terraformGatewayProtocol"`
 	TerraformOwnershipBinding string `json:"terraformOwnershipBinding"`
 }
 
 type PolicyPlanValidation struct {
-	Valid                       bool   `json:"valid"`
-	ValidationToken             string `json:"validationToken"`
-	DefinitionSHA256            string `json:"definitionSha256"`
-	ReferenceBindingFingerprint string `json:"referenceBindingFingerprint"`
-	SchemaVersion               string `json:"schemaVersion"`
-	CompilerFingerprint         string `json:"compilerFingerprint"`
+	Valid                       bool      `json:"valid"`
+	ValidationToken             string    `json:"validationToken"`
+	DefinitionSHA256            string    `json:"definitionSha256"`
+	ReferenceBindingFingerprint string    `json:"referenceBindingFingerprint"`
+	SchemaVersion               string    `json:"schemaVersion"`
+	CompilerFingerprint         string    `json:"compilerFingerprint"`
+	ExpiresAt                   time.Time `json:"expiresAt"`
+}
+
+type LLMGatewayPlanValidation struct {
+	Valid           bool      `json:"valid"`
+	ValidationToken string    `json:"validationToken"`
+	PlanSHA256      string    `json:"planSha256"`
+	SchemaVersion   string    `json:"schemaVersion"`
+	ExpiresAt       time.Time `json:"expiresAt"`
+}
+
+func (c *Client) ValidateLLMGatewayPlan(ctx context.Context, payload map[string]any) (LLMGatewayPlanValidation, error) {
+	var result LLMGatewayPlanValidation
+	if err := c.Do(ctx, http.MethodPost, "llm-gateway/plans/validate", payload, &result); err != nil {
+		return result, fmt.Errorf("authoritative LLM Gateway plan validation: %w", err)
+	}
+	if !result.Valid || result.ValidationToken == "" || result.SchemaVersion != "forge.terraform.llm-gateway-plan.v1" {
+		return result, errors.New("Forge server returned an incomplete LLM Gateway plan binding")
+	}
+	return result, nil
 }
 
 func (c *Client) ValidatePolicyPlan(ctx context.Context, family string, definition, sourceRef any, expectedRevision int64) (PolicyPlanValidation, error) {
@@ -77,7 +111,7 @@ func (c *Client) ValidatePolicyPlan(ctx context.Context, family string, definiti
 	}
 	cacheKey := fmt.Sprintf("%x", sha256.Sum256(canonical))
 	c.validationMu.Lock()
-	if cached, ok := c.planValidations[cacheKey]; ok {
+	if cached, ok := c.planValidations[cacheKey]; ok && time.Until(cached.ExpiresAt) > time.Minute {
 		c.validationMu.Unlock()
 		return cached, nil
 	}
@@ -99,7 +133,7 @@ func (c *Client) Negotiate(ctx context.Context) (PolicyCapabilities, error) {
 	if err := c.Do(ctx, http.MethodGet, "policy-contracts/capabilities", nil, &result); err != nil {
 		return result, fmt.Errorf("negotiate Forge policy contracts: %w", err)
 	}
-	if result.PolicySchemaVersion != "forge.policy.families.v1" || result.RegoLanguageVersion != "forge.rego.v1" || result.TerraformPolicyProtocol != "forge.terraform.policy.v1" || result.TerraformOwnershipBinding != "service_account_principal" || result.RegoCompilerFingerprint == "" {
+	if result.PolicySchemaVersion != "forge.policy.families.v1" || result.RegoLanguageVersion != "forge.rego.v1" || result.TerraformPolicyProtocol != "forge.terraform.policy.v1" || result.TerraformGatewayProtocol != "forge.terraform.llm-gateway-plan.v1" || result.TerraformOwnershipBinding != "service_account_principal" || result.RegoCompilerFingerprint == "" {
 		return result, errors.New("Forge server does not advertise a compatible policy-as-code contract")
 	}
 	return result, nil
@@ -133,6 +167,41 @@ func (c *Client) ValidateRego(ctx context.Context, family, module string, evalua
 	c.regoValidations[cacheKey] = result
 	c.validationMu.Unlock()
 	return result, nil
+}
+
+func (c *Client) EvaluateRego(ctx context.Context, family, module string, input any, evaluateOn ...string) (RegoValidation, error) {
+	var result RegoValidation
+	body := map[string]any{"family": family, "module": module, "input": input}
+	if len(evaluateOn) > 0 {
+		body["evaluateOn"] = evaluateOn
+	}
+	if err := c.Do(ctx, http.MethodPost, "policy-code/rego/validate", body, &result); err != nil {
+		return result, fmt.Errorf("authoritative Forge Rego evaluation: %w", err)
+	}
+	if !result.Valid || result.Result == nil {
+		return result, errors.New("Forge server returned no authoritative Rego result")
+	}
+	return result, nil
+}
+
+func (c *Client) ResolvePolicyReference(ctx context.Context, kind, selector, parentID, qualifier string) (PolicyReference, error) {
+	query := url.Values{"kind": {kind}, "selector": {selector}}
+	if parentID != "" {
+		query.Set("parentId", parentID)
+	}
+	if qualifier != "" {
+		query.Set("qualifier", qualifier)
+	}
+	var response struct {
+		Item PolicyReference `json:"item"`
+	}
+	if err := c.Do(ctx, http.MethodGet, "policy-references/resolve?"+query.Encode(), nil, &response); err != nil {
+		return PolicyReference{}, err
+	}
+	if response.Item.ID == "" {
+		return PolicyReference{}, errors.New("Forge server returned an empty policy reference")
+	}
+	return response.Item, nil
 }
 
 // APIError preserves the status code so resources can distinguish remote

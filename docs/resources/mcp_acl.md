@@ -17,7 +17,7 @@ An MCP server/tool ACL lowered to the canonical ContentPolicy family.
 ### Required
 
 - `effect` (String)
-- `id` (String) Stable Forge policy identifier.
+- `id` (String) Stable ACL identifier. Changing it replaces the resource.
 - `name` (String)
 - `server` (String) Exact MCP server name or slug.
 
@@ -27,7 +27,7 @@ An MCP server/tool ACL lowered to the canonical ContentPolicy family.
 - `group_directory_ids` (Map of String) Optional map from a configured group name to a Forge directory ID, used only to disambiguate duplicate exact matches.
 - `groups` (Set of String) Exact group names.
 - `tools` (Set of String)
-- `user_directory_ids` (Map of String) Optional map from a configured user email to a Forge directory ID, used only to disambiguate duplicate exact matches.
+- `user_directory_ids` (Map of String) Optional map from a configured user name to a Forge directory ID, used only to disambiguate duplicate exact matches.
 - `users` (Set of String) Exact user emails.
 
 ### Read-Only

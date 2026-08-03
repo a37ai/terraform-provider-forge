@@ -21,12 +21,6 @@ resource "forge_llm_gateway_access_profile" "approved_models" {
   state            = "active"
   enforcement_mode = "enforce"
   model_patterns   = ["claude-sonnet", "gpt-5"]
-
-  subject_binding {
-    subject_kind = "service_account"
-    subject_name = "Production agent"
-  }
-
   route {
     provider                = "OpenAI"
     name                    = "Primary OpenAI"

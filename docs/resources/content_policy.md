@@ -18,11 +18,12 @@ A Forge content policy using forge.rego.v1 match logic.
 
 - `action` (String)
 - `evaluate_on` (List of String)
-- `id` (String) Stable Forge policy identifier.
+- `id` (String) Stable Forge policy identifier. Changing it replaces the resource.
 - `name` (String)
 
 ### Optional
 
+- `acknowledge_broad_scope` (Boolean) Required before enabling a broad disruptive Content policy. Empty scope means all applicable subjects, agents, and products.
 - `agents` (Set of String)
 - `auto_approve_on_request` (Boolean)
 - `compliance_frameworks` (Set of String)
@@ -43,16 +44,16 @@ A Forge content policy using forge.rego.v1 match logic.
 - `module` (String) A forge.rego.v1 module. Set exactly one of module or conditions.
 - `products` (Set of String)
 - `rationale` (String)
+- `redaction_apply_to` (String)
 - `redaction_fake_subtype` (String)
 - `redaction_keep_end` (Number)
 - `redaction_keep_start` (Number)
 - `redaction_mask_character` (String)
 - `redaction_paths` (Set of String)
+- `redaction_pattern` (String)
 - `redaction_replacement` (String)
 - `redaction_salt_ref` (String)
 - `redaction_strategy` (String)
-- `remediation_action` (String)
-- `remediation_target` (String)
 - `service_accounts` (Set of String)
 - `use_cases` (Set of String)
 - `user_directory_ids` (Map of String) Optional map from a configured user email to a Forge directory ID, used only to disambiguate duplicate exact matches.
@@ -60,16 +61,7 @@ A Forge content policy using forge.rego.v1 match logic.
 
 ### Read-Only
 
-- `acknowledge_broad_scope` (Boolean)
-- `approval_mode` (String)
 - `current_revision` (Number)
 - `definition_sha256` (String)
-- `devices` (Set of String)
-- `enforced_by` (Set of String)
-- `enforcement_surfaces` (Set of String)
 - `module_sha256` (String)
-- `notification` (Dynamic)
-- `remediation` (Dynamic)
-- `runtime` (Dynamic)
-- `severity` (String)
 - `validation_token` (String, Sensitive) Short-lived server plan binding. Managed internally by the provider and never authored.

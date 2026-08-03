@@ -13,7 +13,7 @@ var boundedJSONPathPattern = regexp.MustCompile(`^\$(?:\.[A-Za-z_][A-Za-z0-9_-]*
 
 func (r *regoPolicyResource) ValidateConfig(ctx context.Context, request resource.ValidateConfigRequest, response *resource.ValidateConfigResponse) {
 	var model regoPolicyModel
-	response.Diagnostics.Append(request.Config.Get(ctx, &model)...)
+	response.Diagnostics.Append(r.readModel(ctx, request.Config, &model)...)
 	if response.Diagnostics.HasError() {
 		return
 	}
@@ -30,9 +30,13 @@ func validateRegoPolicyConfig(ctx context.Context, family string, m regoPolicyMo
 		problems = append(problems, "set exactly one of module or conditions")
 	}
 	if conditionsSet {
-		_, customFieldTypes, customErr := customFieldsFromTerraform(m.CustomFields, family)
-		if customErr != nil && !errors.Is(customErr, errDynamicValueUnknown) {
-			problems = append(problems, customErr.Error())
+		customFieldTypes := map[string]string{}
+		if family == "content" {
+			var customErr error
+			_, customFieldTypes, customErr = customFieldsFromTerraform(m.CustomFields, family)
+			if customErr != nil && !errors.Is(customErr, errDynamicValueUnknown) {
+				problems = append(problems, customErr.Error())
+			}
 		}
 		if _, err := nativeConditionsFromTerraform(m.Conditions, family, customFieldTypes); err != nil {
 			if !errors.Is(err, errDynamicValueUnknown) {
@@ -55,25 +59,59 @@ func validateRegoPolicyConfig(ctx context.Context, family string, m regoPolicyMo
 		}
 	}
 	action := m.Action.ValueString()
-	redactionSet := !m.RedactionStrategy.IsNull() || !m.RedactionReplacement.IsNull() || !m.RedactionPaths.IsNull() || !m.RedactionKeepStart.IsNull() || !m.RedactionKeepEnd.IsNull() || !m.RedactionMask.IsNull() || !m.RedactionSaltRef.IsNull() || !m.RedactionFakeSubtype.IsNull()
-	filterSet := !m.FilterCollectionPath.IsNull() || !m.FilterPath.IsNull() || !m.FilterOperator.IsNull() || !m.FilterValue.IsNull() || !m.FilterOnUnavailable.IsNull()
+	if family == "content" && !m.Enabled.IsUnknown() && m.Enabled.ValueBool() && !m.AcknowledgeBroadScope.ValueBool() &&
+		len(m.Users.Elements()) == 0 && len(m.Groups.Elements()) == 0 && len(m.ServiceAccounts.Elements()) == 0 && len(m.Agents.Elements()) == 0 && len(m.Products.Elements()) == 0 &&
+		map[string]bool{"block": true, "redact": true, "filter": true, "nudge": true, "require_approval": true}[action] {
+		problems = append(problems, "acknowledge_broad_scope must be true before enabling a broad disruptive Content policy")
+	}
+	knownString := func(value types.String) bool { return !value.IsNull() && !value.IsUnknown() }
+	knownInt := func(value types.Int64) bool { return !value.IsNull() && !value.IsUnknown() }
+	redactionSet := knownString(m.RedactionStrategy) || knownString(m.RedactionReplacement) || (!m.RedactionPaths.IsNull() && !m.RedactionPaths.IsUnknown()) || knownInt(m.RedactionKeepStart) || knownInt(m.RedactionKeepEnd) || knownString(m.RedactionMask) || knownString(m.RedactionSaltRef) || knownString(m.RedactionFakeSubtype) || knownString(m.RedactionApplyTo) || knownString(m.RedactionPattern)
+	filterSet := knownString(m.FilterCollectionPath) || knownString(m.FilterPath) || knownString(m.FilterOperator) || (!m.FilterValue.IsNull() && !m.FilterValue.IsUnknown()) || knownString(m.FilterOnUnavailable)
 	if action != "redact" && redactionSet {
 		problems = append(problems, "redaction attributes are only valid when action is redact")
 	}
 	if action != "filter" && filterSet {
 		problems = append(problems, "filter attributes are only valid when action is filter")
 	}
+	if family == "content" && action != "require_approval" && !m.AutoApprove.IsNull() && !m.AutoApprove.IsUnknown() {
+		problems = append(problems, "auto_approve_on_request is only valid when action is require_approval")
+	}
+	if family == "access" && action != "require_approval" && !m.ApprovalMode.IsNull() && !m.ApprovalMode.IsUnknown() {
+		problems = append(problems, "approval_mode is only valid when action is require_approval")
+	}
 	if family == "content" && action == "redact" {
 		strategy := m.RedactionStrategy.ValueString()
 		if strategy == "" {
 			strategy = "constant"
 		}
+		redactionAttributeSet := map[string]bool{
+			"redaction_replacement":  knownString(m.RedactionReplacement),
+			"redaction_keep_start":   knownInt(m.RedactionKeepStart),
+			"redaction_keep_end":     knownInt(m.RedactionKeepEnd),
+			"redaction_mask":         knownString(m.RedactionMask),
+			"redaction_salt_ref":     knownString(m.RedactionSaltRef),
+			"redaction_fake_subtype": knownString(m.RedactionFakeSubtype),
+		}
+		rejectRedactionAttributes := func(allowed ...string) {
+			allowedSet := map[string]bool{}
+			for _, name := range allowed {
+				allowedSet[name] = true
+			}
+			for name, set := range redactionAttributeSet {
+				if set && !allowedSet[name] {
+					problems = append(problems, name+" is not valid for "+strategy+" redaction")
+				}
+			}
+		}
 		switch strategy {
 		case "constant":
+			rejectRedactionAttributes("redaction_replacement")
 			if m.RedactionReplacement.IsNull() {
 				problems = append(problems, "redaction_replacement is required for constant redaction")
 			}
 		case "partial":
+			rejectRedactionAttributes("redaction_keep_start", "redaction_keep_end", "redaction_mask")
 			if m.RedactionKeepStart.IsNull() && m.RedactionKeepEnd.IsNull() {
 				problems = append(problems, "partial redaction requires redaction_keep_start or redaction_keep_end")
 			}
@@ -82,10 +120,24 @@ func validateRegoPolicyConfig(ctx context.Context, family string, m regoPolicyMo
 					problems = append(problems, name+" must be between 0 and 256")
 				}
 			}
+		case "hash":
+			rejectRedactionAttributes("redaction_salt_ref")
+		case "nullify":
+			rejectRedactionAttributes()
 		case "fake":
+			rejectRedactionAttributes("redaction_fake_subtype")
 			if !map[string]bool{"string": true, "email": true, "phone": true, "ipv4": true, "payment_card": true}[m.RedactionFakeSubtype.ValueString()] {
 				problems = append(problems, "redaction_fake_subtype must be string, email, phone, ipv4, or payment_card")
 			}
+		}
+		if !m.RedactionApplyTo.IsNull() && m.RedactionApplyTo.ValueString() == "matches" && m.RedactionPattern.IsNull() {
+			problems = append(problems, "redaction_pattern is required when redaction_apply_to is matches")
+		}
+		if m.RedactionApplyTo.IsNull() && !m.RedactionPattern.IsNull() {
+			problems = append(problems, "redaction_apply_to = matches is required when redaction_pattern is set")
+		}
+		if strategy == "nullify" && (!m.RedactionApplyTo.IsNull() || !m.RedactionPattern.IsNull()) {
+			problems = append(problems, "nullify redaction does not support match-only redaction")
 		}
 	}
 	if family == "content" && action == "filter" && (m.FilterCollectionPath.IsNull() || m.FilterPath.IsNull() || m.FilterOperator.IsNull() || m.FilterValue.IsNull() || m.FilterOnUnavailable.IsNull()) {

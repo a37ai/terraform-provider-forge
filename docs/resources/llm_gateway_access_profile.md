@@ -16,24 +16,26 @@ A Forge LLM Gateway access profile and its atomic provider route plan. This is t
 
 ### Required
 
-- `id` (String) Stable Forge access profile identifier.
+- `id` (String) Stable access profile identifier. Changing it replaces the resource.
 - `name` (String)
 
 ### Optional
 
+- `adopt_existing` (Boolean) Explicitly claim an existing Forge-managed profile at its current version. New profiles do not need this.
 - `data_classes` (Set of String)
 - `description` (String)
 - `enforcement_mode` (String) Policy behavior: monitor records decisions, simulate returns simulated outcomes, enforce changes traffic, and break_glass bypasses enforcement while retaining audit evidence.
 - `model_patterns` (Set of String) Requested model names or glob patterns allowed by this profile, such as gpt-5 or claude-\*.
-- `model_selectors_json` (String, Deprecated) Deprecated compatibility input for the gateway model selector JSON object. Use model_patterns.
 - `policy_hooks` (Set of String) Gateway stages evaluated for this profile: prompt, pre_tool_use, and post_tool_use.
 - `route` (Block List) (see [below for nested schema](#nestedblock--route))
 - `state` (String) Lifecycle state: draft, active, disabled, or archived.
-- `subject_binding` (Block List) A typed gateway principal binding. Use subject_name with an exact customer-visible selector; subject_id is deprecated compatibility only. (see [below for nested schema](#nestedblock--subject_binding))
-- `subject_bindings_json` (String, Deprecated) Deprecated compatibility input for the gateway subject binding JSON array. Use subject_binding blocks.
 
 ### Read-Only
 
+- `management_mode` (String)
+- `manager_id` (String)
+- `manager_instance` (String)
+- `validation_token` (String, Sensitive) Short-lived signed plan binding managed internally by the provider.
 - `version` (Number)
 
 <a id="nestedblock--route"></a>
@@ -57,17 +59,5 @@ Optional:
 - `route_priority` (Number)
 - `strategy` (String) Selection strategy within this priority tier: fixed, weighted, policy, cost, or latency. Configure later priority tiers for fallback.
 - `tool_deny_behavior` (String) Denied tool behavior: hard_block rejects the request; rewrite_refusal returns a refusal-shaped result.
+- `traffic_percentage` (Number) Traffic percentage for this route within its priority tier.
 - `upstream_model` (String)
-- `weight` (Number)
-  <a id="nestedblock--subject_binding"></a>
-
-### Nested Schema for `subject_binding`
-
-Required:
-
-- `subject_kind` (String) Principal type: user, group, app, service_account, agent, or customer_tenant.
-
-Optional:
-
-- `subject_id` (String, Deprecated) Deprecated stable Forge principal ID compatibility input. Use subject_name.
-- `subject_name` (String) Exact readable selector: user email, group name, app name or slug, service-account name, agent name, or customer-tenant name or slug. Forge rejects missing, inactive, or ambiguous matches.

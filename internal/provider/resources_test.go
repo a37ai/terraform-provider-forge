@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,12 +15,36 @@ import (
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+func TestLLMGatewayPlanExpectedVersion(t *testing.T) {
+	claims, err := json.Marshal(map[string]any{"expectedVersion": 17})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(claims) + ".signature"
+	if got, err := llmGatewayPlanExpectedVersion(token); err != nil || got != 17 {
+		t.Fatalf("llmGatewayPlanExpectedVersion() = %d, %v", got, err)
+	}
+	if _, err := llmGatewayPlanExpectedVersion("not-a-plan-token"); err == nil {
+		t.Fatal("invalid plan token was accepted")
+	}
+}
+
 func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
-	server := httptest.NewServer(handler)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/headless/v1/organizations/org.test/policy-plans/validate" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"valid": true, "validationToken": "test-plan-token", "schemaVersion": "forge.policy.families.v1",
+				"compilerFingerprint": "compiler", "expiresAt": time.Now().Add(10 * time.Minute),
+			})
+			return
+		}
+		handler(w, r)
+	}))
 	t.Cleanup(server.Close)
 	client, err := NewClient(server.URL, "org.test", "secret", "workspace", "instance", "test", 2*time.Second)
 	if err != nil {
@@ -43,6 +68,22 @@ func TestTerraformExamplesParse(t *testing.T) {
 	for _, name := range matches {
 		if _, diagnostics := parser.ParseHCLFile(name); diagnostics.HasErrors() {
 			t.Errorf("%s: %s", name, diagnostics.Error())
+		}
+	}
+}
+
+func TestPolicySchemasExposeOnlyTheirFamilySurface(t *testing.T) {
+	for family, forbidden := range map[string][]string{
+		"content": {"severity", "enforcement_surfaces", "runtime", "notification", "approval_mode", "remediation", "devices", "enforced_by", "remediation_action", "remediation_target"},
+		"access":  {"service_accounts", "evaluate_on", "agents", "products", "custom_fields", "message", "auto_approve_on_request", "redaction_strategy", "redaction_pattern", "filter_path", "remediation_action", "remediation_target"},
+	} {
+		policyResource := &regoPolicyResource{family: family}
+		var response resource.SchemaResponse
+		policyResource.Schema(context.Background(), resource.SchemaRequest{}, &response)
+		for _, name := range forbidden {
+			if _, exists := response.Schema.Attributes[name]; exists {
+				t.Errorf("%s schema exposes %s", family, name)
+			}
 		}
 	}
 }
@@ -131,26 +172,20 @@ func TestQualifiedSelectorRejectsQualifierForUnlistedName(t *testing.T) {
 }
 
 func TestLLMGatewayTerraformResourceUsesCanonicalAccessProfileRoutePlan(t *testing.T) {
-	subjectBindings, diagnostics := types.ListValueFrom(context.Background(), subjectBindingObjectType(), []llmGatewaySubjectBindingModel{{
-		SubjectKind: types.StringValue("group"),
-		SubjectName: types.StringNull(),
-		SubjectID:   types.StringValue("group.engineering"),
-	}})
-	if diagnostics.HasError() {
-		t.Fatalf("subject binding model diagnostics=%v", diagnostics)
-	}
+	providers := []llmGatewayProviderAPI{{ID: "provider.openai", Name: "OpenAI"}}
+	var diagnostics diag.Diagnostics
 	routes, diagnostics := types.ListValueFrom(context.Background(), routeObjectType(), []llmGatewayRoutePlanModel{{
 		ID: types.StringValue("route.primary"), Provider: types.StringValue("OpenAI"), Name: types.StringValue("Primary"),
 		RequestedModelPattern: types.StringValue("gpt-*"), UpstreamModel: types.StringValue("gpt-5"), APISurface: types.StringValue("openai_responses"),
-		Strategy: types.StringValue("fixed"), RoutePriority: types.Int64Value(1), Weight: types.Int64Value(100), RolloutState: types.StringValue("enforce"),
+		Strategy: types.StringValue("fixed"), RoutePriority: types.Int64Value(1), TrafficPercentage: types.Int64Value(100), RolloutState: types.StringValue("enforce"),
 		EnforcementMode: types.StringValue("enforce"), PolicyHooks: stringSet("prompt", "pre_tool_use"), ToolDenyBehavior: types.StringValue("hard_block"), ConfigJSON: types.StringValue(`{"timeoutSeconds":30}`),
 	}})
 	if diagnostics.HasError() {
 		t.Fatalf("route model diagnostics=%v", diagnostics)
 	}
-	model := llmGatewayAccessProfileModel{ID: types.StringValue("profile.engineering"), Name: types.StringValue("Engineering"), Description: types.StringValue("Engineering gateway access"), State: types.StringValue("active"), EnforcementMode: types.StringValue("enforce"), SubjectBindings: subjectBindings, ModelPatterns: stringSet("gpt-5"), SubjectBindingsJSON: types.StringNull(), ModelSelectorsJSON: types.StringNull(), DataClasses: stringSet("internal"), PolicyHooks: stringSet("prompt"), Routes: routes}
+	model := llmGatewayAccessProfileModel{ID: types.StringValue("profile.engineering"), Name: types.StringValue("Engineering"), Description: types.StringValue("Engineering gateway access"), State: types.StringValue("active"), EnforcementMode: types.StringValue("enforce"), ModelPatterns: stringSet("gpt-5"), DataClasses: stringSet("internal"), PolicyHooks: stringSet("prompt"), Routes: routes}
 	var d diag.Diagnostics
-	body := (&llmGatewayAccessProfileResource{}).payload(context.Background(), model, llmGatewaySubjectResolutions{}, &d)
+	body := (&llmGatewayAccessProfileResource{}).payload(context.Background(), model, providers, &d)
 	if d.HasError() {
 		t.Fatalf("payload diagnostics=%v", d)
 	}
@@ -158,140 +193,35 @@ func TestLLMGatewayTerraformResourceUsesCanonicalAccessProfileRoutePlan(t *testi
 	if profile["id"] != "profile.engineering" || object(profile["modelSelectors"])["modelPatterns"].([]string)[0] != "gpt-5" {
 		t.Fatalf("profile=%+v", profile)
 	}
-	bindings := profile["subjectBindings"].([]any)
-	if len(bindings) != 1 || object(bindings[0])["subjectKind"] != "group" || object(bindings[0])["subjectId"] != "group.engineering" {
-		t.Fatalf("subject bindings=%+v", bindings)
+	if _, exists := profile["subjectBindings"]; exists {
+		t.Fatalf("retired subject bindings were emitted: %+v", profile)
 	}
 	route := body["routes"].([]map[string]any)[0]
-	if route["providerName"] != "OpenAI" || route["apiSurface"] != "openai_responses" || object(route["config"])["timeoutSeconds"] != float64(30) {
+	if route["providerId"] != "provider.openai" || route["trafficPercentage"] != int64(100) || route["apiSurface"] != "openai_responses" || object(route["config"])["timeoutSeconds"] != float64(30) {
 		t.Fatalf("route=%+v", route)
 	}
 }
 
-func TestLLMGatewayTerraformResourceKeepsPublishedJSONCompatibility(t *testing.T) {
-	model := llmGatewayAccessProfileModel{
-		SubjectBindings:     types.ListNull(subjectBindingObjectType()),
-		ModelPatterns:       types.SetNull(types.StringType),
-		SubjectBindingsJSON: types.StringValue(`[{"subjectKind":"agent","subjectId":"agent.release"}]`),
-		ModelSelectorsJSON:  types.StringValue(`{"modelPatterns":["claude-*"]}`),
-		Routes:              types.ListValueMust(routeObjectType(), nil),
-	}
-	var diagnostics diag.Diagnostics
-	body := (&llmGatewayAccessProfileResource{}).payload(context.Background(), model, llmGatewaySubjectResolutions{}, &diagnostics)
-	if diagnostics.HasError() {
-		t.Fatalf("payload diagnostics=%v", diagnostics)
-	}
-	profile := body["profile"].(map[string]any)
-	if object(profile["subjectBindings"].([]any)[0])["subjectId"] != "agent.release" {
-		t.Fatalf("legacy subject bindings=%+v", profile["subjectBindings"])
-	}
-	if object(profile["modelSelectors"])["modelPatterns"].([]any)[0] != "claude-*" {
-		t.Fatalf("legacy model selectors=%+v", profile["modelSelectors"])
-	}
-}
-
-func TestLLMGatewayTerraformResourceResolvesReadableServiceAccountName(t *testing.T) {
-	subjectBindings, buildDiagnostics := types.ListValueFrom(context.Background(), subjectBindingObjectType(), []llmGatewaySubjectBindingModel{{
-		SubjectKind: types.StringValue("service_account"),
-		SubjectName: types.StringValue("Production agent"),
-		SubjectID:   types.StringNull(),
+func TestLLMGatewayTerraformResourceRejectsMissingAndAmbiguousProviders(t *testing.T) {
+	routes, buildDiagnostics := types.ListValueFrom(context.Background(), routeObjectType(), []llmGatewayRoutePlanModel{{
+		Provider: types.StringValue("OpenAI"), Name: types.StringValue("Primary"), RequestedModelPattern: types.StringValue("gpt-*"), APISurface: types.StringValue("openai_responses"), PolicyHooks: types.SetNull(types.StringType),
 	}})
 	if buildDiagnostics.HasError() {
-		t.Fatalf("subject binding model diagnostics=%v", buildDiagnostics)
+		t.Fatalf("route diagnostics=%v", buildDiagnostics)
 	}
 	model := llmGatewayAccessProfileModel{
-		SubjectBindings:     subjectBindings,
-		ModelPatterns:       stringSet("gpt-5"),
-		SubjectBindingsJSON: types.StringNull(),
-		ModelSelectorsJSON:  types.StringNull(),
-		Routes:              types.ListValueMust(routeObjectType(), nil),
+		ModelPatterns: types.SetNull(types.StringType), Routes: routes,
 	}
 	var diagnostics diag.Diagnostics
-	resolutions := llmGatewaySubjectResolutions{
-		byName: map[string]string{gatewaySubjectResolutionKey("service_account", "Production agent"): "lgwsa_production"},
-		byID:   map[string]string{gatewaySubjectResolutionKey("service_account", "lgwsa_production"): "Production agent"},
-	}
-	body := (&llmGatewayAccessProfileResource{}).payload(context.Background(), model, resolutions, &diagnostics)
-	if diagnostics.HasError() {
-		t.Fatalf("payload diagnostics=%v", diagnostics)
-	}
-	binding := object(body["profile"].(map[string]any)["subjectBindings"].([]any)[0])
-	if binding["subjectKind"] != "service_account" || binding["subjectId"] != "lgwsa_production" {
-		t.Fatalf("resolved subject binding=%+v", binding)
-	}
-}
-
-func TestLLMGatewayTerraformResourceResolvesEveryReadableSubjectKindThroughHeadlessAPI(t *testing.T) {
-	inputs := []llmGatewaySubjectBindingModel{
-		{SubjectKind: types.StringValue("user"), SubjectName: types.StringValue("alice@example.com"), SubjectID: types.StringNull()},
-		{SubjectKind: types.StringValue("group"), SubjectName: types.StringValue("Finance"), SubjectID: types.StringNull()},
-		{SubjectKind: types.StringValue("app"), SubjectName: types.StringValue("github"), SubjectID: types.StringNull()},
-		{SubjectKind: types.StringValue("agent"), SubjectName: types.StringValue("Claude Code"), SubjectID: types.StringNull()},
-		{SubjectKind: types.StringValue("service_account"), SubjectName: types.StringValue("Production agent"), SubjectID: types.StringNull()},
-		{SubjectKind: types.StringValue("customer_tenant"), SubjectName: types.StringValue("Acme Logistics"), SubjectID: types.StringNull()},
-	}
-	bindings, buildDiagnostics := types.ListValueFrom(context.Background(), subjectBindingObjectType(), inputs)
-	if buildDiagnostics.HasError() {
-		t.Fatalf("subject binding model diagnostics=%v", buildDiagnostics)
-	}
-	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/headless/v1/organizations/org.test/llm-gateway/subjects/resolve" {
-			t.Fatalf("resolver path=%q", r.URL.Path)
-		}
-		if r.Header.Get("Authorization") != "Bearer secret" {
-			t.Fatalf("missing headless authorization")
-		}
-		var request struct {
-			Subjects []struct {
-				Kind string `json:"kind"`
-				Name string `json:"name"`
-			} `json:"subjects"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		items := make([]map[string]string, 0, len(request.Subjects))
-		for _, subject := range request.Subjects {
-			items = append(items, map[string]string{
-				"kind": subject.Kind, "name": subject.Name, "subjectId": "resolved." + subject.Kind,
-			})
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
-	})
-	resource := &llmGatewayAccessProfileResource{client: client}
-	var diagnostics diag.Diagnostics
-	resolutions := resource.resolveSubjects(context.Background(), bindings, &diagnostics)
-	if diagnostics.HasError() {
-		t.Fatalf("resolution diagnostics=%v", diagnostics)
-	}
-	for _, input := range inputs {
-		kind, name := input.SubjectKind.ValueString(), input.SubjectName.ValueString()
-		if got := resolutions.byName[gatewaySubjectResolutionKey(kind, name)]; got != "resolved."+kind {
-			t.Errorf("%s resolution=%q", kind, got)
-		}
-	}
-}
-
-func TestLLMGatewayTerraformResourceRejectsUnresolvedReadableSubjectName(t *testing.T) {
-	subjectBindings, buildDiagnostics := types.ListValueFrom(context.Background(), subjectBindingObjectType(), []llmGatewaySubjectBindingModel{{
-		SubjectKind: types.StringValue("service_account"),
-		SubjectName: types.StringValue("Production agent"),
-		SubjectID:   types.StringNull(),
-	}})
-	if buildDiagnostics.HasError() {
-		t.Fatalf("subject binding model diagnostics=%v", buildDiagnostics)
-	}
-	model := llmGatewayAccessProfileModel{
-		SubjectBindings:     subjectBindings,
-		ModelPatterns:       stringSet("gpt-5"),
-		SubjectBindingsJSON: types.StringNull(),
-		ModelSelectorsJSON:  types.StringNull(),
-		Routes:              types.ListValueMust(routeObjectType(), nil),
-	}
-	var diagnostics diag.Diagnostics
-	_ = (&llmGatewayAccessProfileResource{}).payload(context.Background(), model, llmGatewaySubjectResolutions{}, &diagnostics)
+	_ = (&llmGatewayAccessProfileResource{}).payload(context.Background(), model, nil, &diagnostics)
 	if !diagnostics.HasError() {
-		t.Fatal("unresolved readable subject selector must fail")
+		t.Fatal("missing provider must fail")
+	}
+	diagnostics = nil
+	providers := []llmGatewayProviderAPI{{ID: "one", Name: "OpenAI"}, {ID: "two", Name: "OpenAI"}}
+	_ = (&llmGatewayAccessProfileResource{}).payload(context.Background(), model, providers, &diagnostics)
+	if !diagnostics.HasError() {
+		t.Fatal("ambiguous provider must fail")
 	}
 }
 
@@ -303,19 +233,16 @@ func TestLLMGatewayRefreshPreservesOmittedSelectorsAndExactRouteConfig(t *testin
 	if diagnostics.HasError() {
 		t.Fatalf("route model diagnostics=%v", diagnostics)
 	}
-	model := llmGatewayAccessProfileModel{ModelSelectorsJSON: types.StringNull(), SubjectBindingsJSON: types.StringNull(), Routes: priorRoutes}
-	profile := llmGatewayAccessProfileAPI{ID: "profile", Name: "Profile", State: "active", EnforcementMode: "enforce", SubjectBindings: json.RawMessage("[]"), ModelSelectors: json.RawMessage("{}")}
+	model := llmGatewayAccessProfileModel{Routes: priorRoutes}
+	profile := llmGatewayAccessProfileAPI{ID: "profile", Name: "Profile", State: "active", EnforcementMode: "enforce", ModelSelectors: json.RawMessage("{}")}
 	routes := []llmGatewayRouteAPI{
 		{ID: "route.primary", ProviderID: "provider", Name: "Primary", RequestedModelPattern: "gpt-*", UpstreamModel: "gpt-5", APISurface: "openai_responses", Config: json.RawMessage("{}")},
 		{ID: "route.secondary", ProviderID: "provider", Name: "Secondary", RequestedModelPattern: "gpt-4*", UpstreamModel: "gpt-4.1", APISurface: "openai_responses", Config: json.RawMessage("{}")},
 	}
 	var refreshDiagnostics diag.Diagnostics
-	(&llmGatewayAccessProfileResource{}).refreshModel(context.Background(), &model, profile, routes, []llmGatewayProviderAPI{{ID: "provider", Name: "OpenAI"}}, llmGatewaySubjectResolutions{}, &refreshDiagnostics)
+	(&llmGatewayAccessProfileResource{}).refreshModel(context.Background(), &model, profile, routes, []llmGatewayProviderAPI{{ID: "provider", Name: "OpenAI"}}, &refreshDiagnostics)
 	if refreshDiagnostics.HasError() {
 		t.Fatalf("refresh diagnostics=%v", refreshDiagnostics)
-	}
-	if !model.ModelSelectorsJSON.IsNull() {
-		t.Fatalf("omitted model selectors became %q", model.ModelSelectorsJSON.ValueString())
 	}
 	var refreshed []llmGatewayRoutePlanModel
 	refreshDiagnostics.Append(model.Routes.ElementsAs(context.Background(), &refreshed, false)...)
@@ -633,12 +560,31 @@ func TestRegoPolicyConfigValidationCoversEnumsAndActionSpecificShapes(t *testing
 	if got := validateRegoPolicyConfig(context.Background(), "content", constant); len(got) == 0 {
 		t.Fatal("constant redaction without replacement must fail")
 	}
+	constant.RedactionReplacement = types.StringValue("[REDACTED]")
+	constant.RedactionSaltRef = types.StringValue("wrong-strategy")
+	if got := validateRegoPolicyConfig(context.Background(), "content", constant); len(got) == 0 {
+		t.Fatal("constant redaction with hash-only attributes must fail")
+	}
+	hash := null("redact")
+	hash.RedactionStrategy = types.StringValue("hash")
+	hash.RedactionReplacement = types.StringValue("wrong-strategy")
+	if got := validateRegoPolicyConfig(context.Background(), "content", hash); len(got) == 0 {
+		t.Fatal("hash redaction with constant-only attributes must fail")
+	}
 	partial := null("redact")
 	partial.RedactionStrategy = types.StringValue("partial")
 	partial.RedactionKeepStart = types.Int64Value(2)
 	partial.RedactionPaths = stringSet("$.credentials[0]")
 	if got := validateRegoPolicyConfig(context.Background(), "content", partial); len(got) != 0 {
 		t.Fatalf("valid partial redaction: %v", got)
+	}
+	partial.RedactionApplyTo = types.StringValue("matches")
+	if got := validateRegoPolicyConfig(context.Background(), "content", partial); len(got) == 0 {
+		t.Fatal("match-only redaction without a pattern must fail")
+	}
+	partial.RedactionPattern = types.StringValue("secret-[0-9]+")
+	if got := validateRegoPolicyConfig(context.Background(), "content", partial); len(got) != 0 {
+		t.Fatalf("valid match-only redaction: %v", got)
 	}
 	invalidPath := partial
 	invalidPath.RedactionPaths = stringSet("$..secret")
@@ -654,6 +600,33 @@ func TestRegoPolicyConfigValidationCoversEnumsAndActionSpecificShapes(t *testing
 	access.RemediationAction = types.StringValue("inventedAction")
 	if got := validateRegoPolicyConfig(context.Background(), "access", access); len(got) == 0 {
 		t.Fatal("unknown remediation enum must fail")
+	}
+	contentApproval := null("block")
+	contentApproval.AutoApprove = types.BoolValue(true)
+	if got := validateRegoPolicyConfig(context.Background(), "content", contentApproval); len(got) == 0 {
+		t.Fatal("approval configuration on a block policy must fail")
+	}
+	accessApproval := null("block")
+	accessApproval.EvaluateOn = types.ListNull(types.StringType)
+	accessApproval.ApprovalMode = types.StringValue("self_serve")
+	if got := validateRegoPolicyConfig(context.Background(), "access", accessApproval); len(got) == 0 {
+		t.Fatal("approval mode on a block policy must fail")
+	}
+}
+
+func TestSkillACLBuildSupportsEveryoneAndRejectsMixedSubjects(t *testing.T) {
+	resource := &skillACLResource{}
+	model := skillACLModel{ID: types.StringValue("skill.everyone"), Skill: types.StringValue("deploy"), Enabled: types.BoolValue(true), Everyone: types.BoolValue(true), Users: stringSet(), Groups: stringSet(), UserDirectoryIDs: stringMap(nil), GroupDirectoryIDs: stringMap(nil), Effect: types.StringValue("allow")}
+	var diagnostics diag.Diagnostics
+	definition, _ := resource.build(context.Background(), model, &diagnostics)
+	if diagnostics.HasError() || !boolFrom(object(definition["subjects"])["everyone"]) {
+		t.Fatalf("everyone ACL failed: definition=%+v diagnostics=%v", definition, diagnostics)
+	}
+	model.Users = stringSet("alice@example.com")
+	diagnostics = nil
+	resource.build(context.Background(), model, &diagnostics)
+	if !diagnostics.HasError() {
+		t.Fatal("everyone combined with users must fail")
 	}
 }
 

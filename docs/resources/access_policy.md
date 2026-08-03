@@ -18,7 +18,7 @@ A Forge access policy using forge.rego.v1 match logic.
 
 - `action` (String)
 - `enforcement_surfaces` (Set of String) Exact execution surfaces: inline_hook, endpoint_route, or provider.
-- `id` (String) Stable Forge policy identifier.
+- `id` (String) Stable Forge policy identifier. Changing it replaces the resource.
 - `name` (String)
 
 ### Optional
@@ -27,31 +27,17 @@ A Forge access policy using forge.rego.v1 match logic.
 - `approval_mode` (String)
 - `compliance_frameworks` (Set of String)
 - `conditions` (Dynamic) A native HCL condition object using field/op/value leaves; all, any, and not; and Content-only stateful operators. Set exactly one of conditions or module.
-- `custom_fields` (Dynamic) Immutable typed descriptors for registered nested tool.input fields used by native content-policy conditions.
 - `description` (String)
 - `devices` (Set of String)
 - `enabled` (Boolean)
 - `enforced_by` (Set of String) Exact integration names. Forge resolves them authoritatively and errors on missing or ambiguous matches.
 - `except` (Dynamic) A canonical native HCL condition tree. A matching exception suppresses this policy after its primary match succeeds.
-- `filter_collection_path` (String)
-- `filter_on_unavailable` (String)
-- `filter_operator` (String)
-- `filter_path` (String)
-- `filter_value` (Dynamic) Typed scalar, collection, or object compared by the filter.
 - `group_directory_ids` (Map of String) Optional map from a configured group name to a Forge directory ID, used only to disambiguate duplicate exact matches.
 - `groups` (Set of String)
 - `labels` (Set of String)
 - `module` (String) A forge.rego.v1 module. Set exactly one of module or conditions.
 - `notification` (Dynamic) Canonical structured Access notification object.
 - `rationale` (String)
-- `redaction_fake_subtype` (String)
-- `redaction_keep_end` (Number)
-- `redaction_keep_start` (Number)
-- `redaction_mask_character` (String)
-- `redaction_paths` (Set of String)
-- `redaction_replacement` (String)
-- `redaction_salt_ref` (String)
-- `redaction_strategy` (String)
 - `remediation` (Dynamic) Canonical Access remediation object with triggerPhase, applyWhenClassification, and one or more actions.
 - `runtime` (Dynamic) Canonical Access runtime object: candidateMode, detectionMode, detectionLatencyMs, timeoutBehavior, failBehavior, and confidenceThreshold.
 - `severity` (String)
@@ -61,15 +47,7 @@ A Forge access policy using forge.rego.v1 match logic.
 
 ### Read-Only
 
-- `agents` (Set of String)
-- `auto_approve_on_request` (Boolean)
 - `current_revision` (Number)
 - `definition_sha256` (String)
-- `evaluate_on` (List of String)
-- `message` (String)
 - `module_sha256` (String)
-- `products` (Set of String)
-- `remediation_action` (String)
-- `remediation_target` (String)
-- `service_accounts` (Set of String)
 - `validation_token` (String, Sensitive) Short-lived server plan binding. Managed internally by the provider and never authored.
