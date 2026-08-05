@@ -51,6 +51,7 @@ type contentPolicyModel struct {
 	Conditions            types.Dynamic `tfsdk:"conditions"`
 	CustomFields          types.Dynamic `tfsdk:"custom_fields"`
 	Except                types.Dynamic `tfsdk:"except"`
+	Exceptions            types.Dynamic `tfsdk:"exceptions"`
 	CurrentRevision       types.Int64   `tfsdk:"current_revision"`
 	DefinitionSHA         types.String  `tfsdk:"definition_sha256"`
 	ValidationToken       types.String  `tfsdk:"validation_token"`
@@ -82,6 +83,7 @@ type accessPolicyModel struct {
 	Module                types.String  `tfsdk:"module"`
 	Conditions            types.Dynamic `tfsdk:"conditions"`
 	Except                types.Dynamic `tfsdk:"except"`
+	Exceptions            types.Dynamic `tfsdk:"exceptions"`
 	EnforcedBy            types.Set     `tfsdk:"enforced_by"`
 	CurrentRevision       types.Int64   `tfsdk:"current_revision"`
 	DefinitionSHA         types.String  `tfsdk:"definition_sha256"`
@@ -100,7 +102,7 @@ func (r *regoPolicyResource) readModel(ctx context.Context, source terraformMode
 			RedactionReplacement: model.RedactionReplacement, RedactionStrategy: model.RedactionStrategy, RedactionPaths: model.RedactionPaths, RedactionKeepStart: model.RedactionKeepStart, RedactionKeepEnd: model.RedactionKeepEnd,
 			RedactionMask: model.RedactionMask, RedactionSaltRef: model.RedactionSaltRef, RedactionFakeSubtype: model.RedactionFakeSubtype, RedactionApplyTo: model.RedactionApplyTo, RedactionPattern: model.RedactionPattern,
 			FilterCollectionPath: model.FilterCollectionPath, FilterPath: model.FilterPath, FilterOperator: model.FilterOperator, FilterValue: model.FilterValue, FilterOnUnavailable: model.FilterOnUnavailable,
-			Module: model.Module, Conditions: model.Conditions, CustomFields: model.CustomFields, Except: model.Except, CurrentRevision: model.CurrentRevision, DefinitionSHA: model.DefinitionSHA, ValidationToken: model.ValidationToken, ModuleSHA: model.ModuleSHA,
+			Module: model.Module, Conditions: model.Conditions, CustomFields: model.CustomFields, Except: model.Except, Exceptions: model.Exceptions, CurrentRevision: model.CurrentRevision, DefinitionSHA: model.DefinitionSHA, ValidationToken: model.ValidationToken, ModuleSHA: model.ModuleSHA,
 		}
 		return diagnostics
 	}
@@ -109,7 +111,7 @@ func (r *regoPolicyResource) readModel(ctx context.Context, source terraformMode
 	*out = regoPolicyModel{
 		ID: model.ID, Name: model.Name, Description: model.Description, Rationale: model.Rationale, UseCases: model.UseCases, ComplianceFrameworks: model.ComplianceFrameworks, Labels: model.Labels,
 		Enabled: model.Enabled, Severity: model.Severity, AcknowledgeBroadScope: model.AcknowledgeBroadScope, EnforcementSurfaces: model.EnforcementSurfaces, Runtime: model.Runtime, Notification: model.Notification, ApprovalMode: model.ApprovalMode, Remediation: model.Remediation,
-		Users: model.Users, Groups: model.Groups, UserDirectoryIDs: model.UserDirectoryIDs, GroupDirectoryIDs: model.GroupDirectoryIDs, Devices: model.Devices, Action: model.Action, Module: model.Module, Conditions: model.Conditions, Except: model.Except, EnforcedBy: model.EnforcedBy,
+		Users: model.Users, Groups: model.Groups, UserDirectoryIDs: model.UserDirectoryIDs, GroupDirectoryIDs: model.GroupDirectoryIDs, Devices: model.Devices, Action: model.Action, Module: model.Module, Conditions: model.Conditions, Except: model.Except, Exceptions: model.Exceptions, EnforcedBy: model.EnforcedBy,
 		CurrentRevision: model.CurrentRevision, DefinitionSHA: model.DefinitionSHA, ValidationToken: model.ValidationToken, ModuleSHA: model.ModuleSHA,
 	}
 	return diagnostics
@@ -124,13 +126,13 @@ func (r *regoPolicyResource) stateModel(model regoPolicyModel) any {
 			RedactionReplacement: model.RedactionReplacement, RedactionStrategy: model.RedactionStrategy, RedactionPaths: model.RedactionPaths, RedactionKeepStart: model.RedactionKeepStart, RedactionKeepEnd: model.RedactionKeepEnd,
 			RedactionMask: model.RedactionMask, RedactionSaltRef: model.RedactionSaltRef, RedactionFakeSubtype: model.RedactionFakeSubtype, RedactionApplyTo: model.RedactionApplyTo, RedactionPattern: model.RedactionPattern,
 			FilterCollectionPath: model.FilterCollectionPath, FilterPath: model.FilterPath, FilterOperator: model.FilterOperator, FilterValue: model.FilterValue, FilterOnUnavailable: model.FilterOnUnavailable,
-			Module: model.Module, Conditions: model.Conditions, CustomFields: model.CustomFields, Except: model.Except, CurrentRevision: model.CurrentRevision, DefinitionSHA: model.DefinitionSHA, ValidationToken: model.ValidationToken, ModuleSHA: model.ModuleSHA,
+			Module: model.Module, Conditions: model.Conditions, CustomFields: model.CustomFields, Except: model.Except, Exceptions: model.Exceptions, CurrentRevision: model.CurrentRevision, DefinitionSHA: model.DefinitionSHA, ValidationToken: model.ValidationToken, ModuleSHA: model.ModuleSHA,
 		}
 	}
 	return accessPolicyModel{
 		ID: model.ID, Name: model.Name, Description: model.Description, Rationale: model.Rationale, UseCases: model.UseCases, ComplianceFrameworks: model.ComplianceFrameworks, Labels: model.Labels,
 		Enabled: model.Enabled, Severity: model.Severity, AcknowledgeBroadScope: model.AcknowledgeBroadScope, EnforcementSurfaces: model.EnforcementSurfaces, Runtime: model.Runtime, Notification: model.Notification, ApprovalMode: model.ApprovalMode, Remediation: model.Remediation,
-		Users: model.Users, Groups: model.Groups, UserDirectoryIDs: model.UserDirectoryIDs, GroupDirectoryIDs: model.GroupDirectoryIDs, Devices: model.Devices, Action: model.Action, Module: model.Module, Conditions: model.Conditions, Except: model.Except, EnforcedBy: model.EnforcedBy,
+		Users: model.Users, Groups: model.Groups, UserDirectoryIDs: model.UserDirectoryIDs, GroupDirectoryIDs: model.GroupDirectoryIDs, Devices: model.Devices, Action: model.Action, Module: model.Module, Conditions: model.Conditions, Except: model.Except, Exceptions: model.Exceptions, EnforcedBy: model.EnforcedBy,
 		CurrentRevision: model.CurrentRevision, DefinitionSHA: model.DefinitionSHA, ValidationToken: model.ValidationToken, ModuleSHA: model.ModuleSHA,
 	}
 }
