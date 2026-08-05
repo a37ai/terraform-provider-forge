@@ -84,6 +84,7 @@ type regoPolicyModel struct {
 	Conditions            types.Dynamic `tfsdk:"conditions"`
 	CustomFields          types.Dynamic `tfsdk:"custom_fields"`
 	Except                types.Dynamic `tfsdk:"except"`
+	Exceptions            types.Dynamic `tfsdk:"exceptions"`
 	EnforcedBy            types.Set     `tfsdk:"enforced_by"`
 	CurrentRevision       types.Int64   `tfsdk:"current_revision"`
 	DefinitionSHA         types.String  `tfsdk:"definition_sha256"`
@@ -123,6 +124,7 @@ func (r *regoPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		"conditions":              schema.DynamicAttribute{Optional: true, Description: "A native HCL condition object using field/op/value leaves; all, any, and not; and Content-only stateful operators. Set exactly one of conditions or module."},
 		"custom_fields":           schema.DynamicAttribute{Optional: true, Description: "Immutable typed descriptors for registered nested tool.input fields used by native content-policy conditions."},
 		"except":                  schema.DynamicAttribute{Optional: true, Description: "A canonical native HCL condition tree. A matching exception suppresses this policy after its primary match succeeds."},
+		"exceptions":              schema.DynamicAttribute{Optional: true, Description: "Named scoped exceptions with id, reason, optional RFC3339 expiresAt, and a canonical conditions tree."},
 		"action":                  schema.StringAttribute{Required: true},
 		"message":                 schema.StringAttribute{Optional: true, Validators: nonempty},
 		"auto_approve_on_request": schema.BoolAttribute{Optional: true},
@@ -293,9 +295,12 @@ func (r *regoPolicyResource) flatten(ctx context.Context, item policyAPIItem, m 
 	m.UseCases = setStringStateDefaultEmpty(ctx, definition["useCases"], diagnostics)
 	m.ComplianceFrameworks = setStringStateDefaultEmpty(ctx, definition["complianceFrameworks"], diagnostics)
 	m.Labels = setStringStateDefaultEmpty(ctx, definition["labels"], diagnostics)
-	m.Except = types.DynamicNull()
+	m.Except, m.Exceptions = types.DynamicNull(), types.DynamicNull()
 	if exception := definition["except"]; exception != nil {
 		m.Except = dynamicFromGo(exception, diagnostics)
+	}
+	if exceptions := definition["exceptions"]; exceptions != nil {
+		m.Exceptions = dynamicFromGo(exceptions, diagnostics)
 	}
 	m.ID = types.StringValue(stringFrom(definition["id"]))
 	m.Name = types.StringValue(stringFrom(definition["name"]))
@@ -505,6 +510,14 @@ func (r *regoPolicyResource) buildMutation(ctx context.Context, m regoPolicyMode
 			return nil, nil
 		}
 		definition["except"] = exception
+	}
+	if !m.Exceptions.IsNull() && !m.Exceptions.IsUnknown() && m.Exceptions.UnderlyingValue() != nil && !m.Exceptions.IsUnderlyingValueNull() {
+		exceptions, err := terraformDynamicToGo(m.Exceptions)
+		if err != nil {
+			diagnostics.AddError("Invalid policy exceptions", err.Error())
+			return nil, nil
+		}
+		definition["exceptions"] = exceptions
 	}
 	if r.family == "content" {
 		scope["serviceAccounts"] = serviceAccounts
