@@ -301,6 +301,7 @@ func TestPolicyResourcesPreserveAllCanonicalMetadataAndExceptions(t *testing.T) 
 		Devices: stringSet("Finance MacBook"), ServiceAccounts: emptySet(), Agents: emptySet(), Products: emptySet(),
 		Action: types.StringValue("block"), Conditions: testDynamic(t, map[string]any{"field": "device.platform", "op": "eq", "value": "darwin"}),
 		Except:     testDynamic(t, map[string]any{"field": "identity.user_id", "op": "eq", "value": "break-glass@example.com"}),
+		Exceptions: testDynamic(t, []any{map[string]any{"id": "exception:finance", "reason": "Approved finance workflow", "expiresAt": "2026-09-01T00:00:00Z", "conditions": map[string]any{"field": "identity.group_ids", "op": "contains", "value": "finance"}}}),
 		EnforcedBy: stringSet("CrowdStrike Falcon"), EvaluateOn: types.ListNull(types.StringType), Module: types.StringNull(),
 		Message: types.StringNull(), RemediationAction: types.StringNull(), RemediationTarget: types.StringNull(),
 	}
@@ -316,8 +317,23 @@ func TestPolicyResourcesPreserveAllCanonicalMetadataAndExceptions(t *testing.T) 
 	if got := definition["useCases"].([]string); len(got) != 1 || got[0] != "Organizational Access" {
 		t.Fatalf("useCases=%v", got)
 	}
-	if object(definition["except"])["field"] != "identity.user_id" {
+	legacyException := object(definition["except"])
+	if legacyException["field"] != "identity.user_id" || legacyException["op"] != "eq" || legacyException["value"] != "break-glass@example.com" {
 		t.Fatalf("except=%+v", definition["except"])
+	}
+	exceptions := definition["exceptions"].([]any)
+	if len(exceptions) != 1 {
+		t.Fatalf("exceptions=%+v", definition["exceptions"])
+	}
+	exception := object(exceptions[0])
+	exceptionConditions := object(exception["conditions"])
+	if exception["id"] != "exception:finance" ||
+		exception["reason"] != "Approved finance workflow" ||
+		exception["expiresAt"] != "2026-09-01T00:00:00Z" ||
+		exceptionConditions["field"] != "identity.group_ids" ||
+		exceptionConditions["op"] != "contains" ||
+		exceptionConditions["value"] != "finance" {
+		t.Fatalf("exceptions=%+v", definition["exceptions"])
 	}
 	if got := definition["enforcedBy"].([]string); len(got) != 1 || got[0] != "CrowdStrike Falcon" {
 		t.Fatalf("enforcedBy=%v", got)
@@ -325,6 +341,37 @@ func TestPolicyResourcesPreserveAllCanonicalMetadataAndExceptions(t *testing.T) 
 	selectors := object(sourceRef["selectors"])
 	if got := selectors["enforcedBy"].([]string); len(got) != 1 || got[0] != "CrowdStrike Falcon" {
 		t.Fatalf("source selectors=%+v", selectors)
+	}
+	var flattened regoPolicyModel
+	resource.flatten(context.Background(), policyAPIItem{Definition: definition}, &flattened, &diagnostics)
+	if diagnostics.HasError() {
+		t.Fatalf("flatten diagnostics=%v", diagnostics)
+	}
+	roundTrippedLegacy, err := terraformDynamicToGo(flattened.Except)
+	if err != nil {
+		t.Fatalf("round-tripped except=%+v err=%v", roundTrippedLegacy, err)
+	}
+	roundTrippedLegacyException := object(roundTrippedLegacy)
+	if roundTrippedLegacyException["field"] != "identity.user_id" || roundTrippedLegacyException["op"] != "eq" || roundTrippedLegacyException["value"] != "break-glass@example.com" {
+		t.Fatalf("round-tripped except=%+v", roundTrippedLegacy)
+	}
+	roundTripped, err := terraformDynamicToGo(flattened.Exceptions)
+	if err != nil {
+		t.Fatalf("round-tripped exceptions=%+v err=%v", roundTripped, err)
+	}
+	roundTrippedExceptions := roundTripped.([]any)
+	if len(roundTrippedExceptions) != 1 {
+		t.Fatalf("round-tripped exceptions=%+v", roundTripped)
+	}
+	roundTrippedException := object(roundTrippedExceptions[0])
+	roundTrippedConditions := object(roundTrippedException["conditions"])
+	if roundTrippedException["id"] != "exception:finance" ||
+		roundTrippedException["reason"] != "Approved finance workflow" ||
+		roundTrippedException["expiresAt"] != "2026-09-01T00:00:00Z" ||
+		roundTrippedConditions["field"] != "identity.group_ids" ||
+		roundTrippedConditions["op"] != "contains" ||
+		roundTrippedConditions["value"] != "finance" {
+		t.Fatalf("round-tripped exceptions=%+v", roundTripped)
 	}
 }
 

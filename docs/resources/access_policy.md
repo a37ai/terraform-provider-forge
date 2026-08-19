@@ -31,7 +31,8 @@ A Forge access policy using forge.rego.v1 match logic.
 - `devices` (Set of String)
 - `enabled` (Boolean)
 - `enforced_by` (Set of String) Exact integration names. Forge resolves them authoritatively and errors on missing or ambiguous matches.
-- `except` (Dynamic) A canonical native HCL condition tree. A matching exception suppresses this policy after its primary match succeeds.
+- `except` (Dynamic) Legacy compatibility field for one anonymous exception. Prefer exceptions for named, reasoned, and optionally expiring policy exceptions.
+- `exceptions` (Dynamic) Named scoped exceptions with id, reason, optional RFC3339 expiresAt, and a canonical conditions tree. An expiring or otherwise unsupported exception emits no endpoint input, rather than broadening endpoint enforcement.
 - `group_directory_ids` (Map of String) Optional map from a configured group name to a Forge directory ID, used only to disambiguate duplicate exact matches.
 - `groups` (Set of String)
 - `labels` (Set of String)

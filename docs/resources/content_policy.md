@@ -31,7 +31,8 @@ A Forge content policy using forge.rego.v1 match logic.
 - `custom_fields` (Dynamic) Immutable typed descriptors for registered nested tool.input fields used by native content-policy conditions.
 - `description` (String)
 - `enabled` (Boolean)
-- `except` (Dynamic) A canonical native HCL condition tree. A matching exception suppresses this policy after its primary match succeeds.
+- `except` (Dynamic) Legacy compatibility field for one anonymous exception. Prefer exceptions for named, reasoned, and optionally expiring policy exceptions. Content exceptions are not lowered to endpoint authorization, so configuring one causes the endpoint Content decision to be omitted.
+- `exceptions` (Dynamic) Named scoped exceptions with id, reason, optional RFC3339 expiresAt, and a canonical conditions tree. Content exceptions are not lowered to endpoint authorization, so configuring any causes the endpoint Content decision to be omitted.
 - `filter_collection_path` (String)
 - `filter_on_unavailable` (String)
 - `filter_operator` (String)
