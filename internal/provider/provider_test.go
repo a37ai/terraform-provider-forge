@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 )
 
 func TestResolveForgeEndpoint(t *testing.T) {
@@ -20,6 +21,25 @@ func TestResolveForgeEndpoint(t *testing.T) {
 
 	if got := resolveForgeEndpoint("https://api.example.test"); got != "https://api.example.test" {
 		t.Fatalf("configured endpoint = %q", got)
+	}
+}
+
+func TestProviderRegistersGatewayIdentityResources(t *testing.T) {
+	provider := &forgeProvider{}
+	got := map[string]bool{}
+	for _, constructor := range provider.Resources(context.Background()) {
+		var metadata resource.MetadataResponse
+		constructor().Metadata(context.Background(), resource.MetadataRequest{ProviderTypeName: "forge"}, &metadata)
+		got[metadata.TypeName] = true
+	}
+	for _, name := range []string{
+		"forge_llm_gateway_service_account",
+		"forge_llm_gateway_managed_access_override",
+		"forge_device_gateway_identity_assignment",
+	} {
+		if !got[name] {
+			t.Errorf("resource %s is not registered", name)
+		}
 	}
 }
 

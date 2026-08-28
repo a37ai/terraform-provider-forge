@@ -74,9 +74,13 @@ type llmGatewayProviderAPI struct {
 	Name string `json:"displayName"`
 }
 type llmGatewayServiceAccountAPI struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	State string `json:"state"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	OwnerKind   string `json:"ownerKind"`
+	OwnerID     string `json:"ownerId"`
+	Environment string `json:"environment"`
+	State       string `json:"state"`
 }
 type llmGatewayRoutePlanResponse struct {
 	AccessProfile llmGatewayAccessProfileAPI `json:"accessProfile"`
