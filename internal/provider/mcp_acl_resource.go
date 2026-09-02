@@ -181,12 +181,16 @@ func (r *mcpACLResource) apply(ctx context.Context, m mcpACLModel, rev int64, d 
 	if d.HasError() {
 		return
 	}
-	validation, err := r.client.ValidatePolicyPlan(ctx, "content", def, sourceRef, rev)
-	if err != nil {
-		d.AddError("Refresh Forge MCP ACL plan validation", err.Error())
-		return
+	validationToken := m.ValidationToken.ValueString()
+	if validationToken == "" {
+		validation, err := r.client.ValidatePolicyPlan(ctx, "content", def, sourceRef, rev)
+		if err != nil {
+			d.AddError("Refresh Forge MCP ACL plan validation", err.Error())
+			return
+		}
+		validationToken = validation.ValidationToken
 	}
-	body := map[string]any{"definition": def, "expectedRevision": rev, "sourceRef": sourceRef, "validationToken": validation.ValidationToken}
+	body := map[string]any{"definition": def, "expectedRevision": rev, "sourceRef": sourceRef, "validationToken": validationToken}
 	method, target := http.MethodPost, "content-policies"
 	if rev > 0 {
 		method, target = http.MethodPut, target+"/"+url.PathEscape(m.ID.ValueString())

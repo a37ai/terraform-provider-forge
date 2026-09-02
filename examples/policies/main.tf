@@ -4,7 +4,7 @@ terraform {
   required_providers {
     forge = {
       source  = "a37ai/forge"
-      version = "0.1.0"
+      version = "~> 0.4.0"
     }
   }
 }
@@ -13,6 +13,33 @@ provider "forge" {
   organization_id  = "org.example"
   manager_id       = "policy-repository"
   manager_instance = "production"
+}
+
+resource "forge_content_policy" "review_sensitive_prompt" {
+  id          = "review-sensitive-prompt"
+  name        = "Review sensitive prompts"
+  evaluate_on = ["prompt"]
+  action      = "flag_for_review"
+  conditions = {
+    field = "request.prompt"
+    op    = "contains"
+    value = "confidential"
+  }
+}
+
+resource "forge_access_policy" "untrusted_runtime" {
+  id                      = "untrusted-runtime"
+  name                    = "Block an untrusted local runtime"
+  action                  = "block"
+  severity                = "high"
+  acknowledge_broad_scope = true
+  enforcement_surfaces    = ["inline_hook"]
+  conditions = {
+    all = [
+      { field = "process.id", op = "eq", value = "runtime.local" },
+      { field = "process.path", op = "starts_with", value = "/tmp/" }
+    ]
+  }
 }
 
 resource "forge_llm_gateway_access_profile" "approved_models" {
