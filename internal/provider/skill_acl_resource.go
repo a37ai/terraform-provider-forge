@@ -178,12 +178,16 @@ func (r *skillACLResource) apply(ctx context.Context, m skillACLModel, rev int64
 	if d.HasError() {
 		return
 	}
-	validation, err := r.client.ValidatePolicyPlan(ctx, "skill_acl", definition, sourceRef, rev)
-	if err != nil {
-		d.AddError("Refresh Forge skill ACL plan validation", err.Error())
-		return
+	validationToken := m.ValidationToken.ValueString()
+	if validationToken == "" {
+		validation, err := r.client.ValidatePolicyPlan(ctx, "skill_acl", definition, sourceRef, rev)
+		if err != nil {
+			d.AddError("Refresh Forge skill ACL plan validation", err.Error())
+			return
+		}
+		validationToken = validation.ValidationToken
 	}
-	body := map[string]any{"definition": definition, "expectedRevision": rev, "sourceRef": sourceRef, "validationToken": validation.ValidationToken}
+	body := map[string]any{"definition": definition, "expectedRevision": rev, "sourceRef": sourceRef, "validationToken": validationToken}
 	method, target := http.MethodPost, "skill-acls"
 	if rev > 0 {
 		method, target = http.MethodPut, target+"/"+url.PathEscape(m.ID.ValueString())

@@ -7,7 +7,10 @@ by exact human-readable names and resolved authoritatively by Forge.
 ```hcl
 terraform {
   required_providers {
-    forge = { source = "a37ai/forge" }
+    forge = {
+      source  = "a37ai/forge"
+      version = "~> 0.4.0"
+    }
   }
 }
 
@@ -26,33 +29,31 @@ resource "forge_content_policy" "customer_export" {
   action      = "block"
   module      = <<-REGO
     package forge.content
+    default match := {"matched": false}
     match := {"matched": input.tool.id == "customer.export", "reasonCode": "customer_export"}
   REGO
 }
 
-resource "forge_access_policy" "untrusted_runtime" {
-  id                       = "untrusted-runtime"
-  name                     = "Block an untrusted local runtime"
-  action                   = "block"
-  severity                 = "high"
-  acknowledge_broad_scope  = true
-  enforcement_surfaces     = ["inline_hook"]
+resource "forge_access_policy" "unapproved_ai_api" {
+  id                      = "unapproved-ai-api"
+  name                    = "Block unapproved AI API destination"
+  action                  = "block"
+  severity                = "high"
+  acknowledge_broad_scope = true
+  enforcement_surfaces    = ["endpoint_route"]
+
   conditions = {
-    all = [
-      { field = "process.id", op = "eq", value = "runtime.local" },
-      { field = "process.path", op = "starts_with", value = "/tmp/" }
-    ]
+    field = "destination.domain"
+    op    = "eq"
+    value = "api.deepseek.com"
   }
+
   notification = {
-    message         = "An untrusted local AI runtime was blocked."
-    notifyUser      = true
-    adminAudience   = "security_admins"
-    acknowledgement = "mandatory_when_disruptive"
+    message          = "Direct access to this AI API destination is blocked."
+    notifyUser       = true
+    adminAudience    = "security_admins"
+    acknowledgement  = "mandatory_when_disruptive"
     exceptionRequest = "disabled_for_future_blocks"
-  }
-  remediation = {
-    triggerPhase = "post_block_cleanup"
-    actions = [{ surface = "local_runtime", action = "quarantineRuntime" }]
   }
 }
 
@@ -95,7 +96,10 @@ terraform state replace-provider registry.terraform.io/forge/forge registry.terr
 ```
 
 Resources: `forge_content_policy`, `forge_access_policy`,
-`forge_llm_gateway_access_profile`, `forge_mcp_acl`, and `forge_skill_acl`.
+`forge_llm_gateway_access_profile`, `forge_llm_gateway_service_account`,
+`forge_llm_gateway_managed_access_override`,
+`forge_device_gateway_identity_assignment`, `forge_mcp_acl`,
+`forge_skill_acl`, and `forge_policy_authority`.
 `forge_policy_authority` is the explicit, revision-bound
 adoption/release resource for an existing console-authored policy. The first two
 accept exactly one `forge.rego.v1` module or a native recursive HCL
@@ -127,6 +131,45 @@ agent session or single invocation. Native gateway route plans and ACLs use
 bounded ordered lists or unique sets as appropriate. Rego
 source is always compiled by the authoritative server before a mutation.
 
+## Apply and verify
+
+Run the normal Terraform lifecycle from the directory containing the
+configuration:
+
+```sh
+terraform init
+terraform fmt -check
+terraform validate
+terraform plan -out=tfplan
+terraform apply tfplan
+terraform plan -detailed-exitcode # exit 0 means refresh converged
+```
+
+Planning is an online operation. Forge negotiates the policy-as-code protocol,
+resolves every readable selector, and validates Rego, native conditions, stages,
+and enforcement surfaces before Terraform can apply a mutation. A validation
+error therefore means the proposed policy is not executable on the selected
+surface; correct the policy instead of bypassing the plan.
+
+Import is supported for Content policies, Access policies, MCP ACLs, skill
+ACLs, LLM Gateway access profiles, and policy-authority bindings:
+
+```sh
+terraform import forge_content_policy.example existing-policy-id
+```
+
+The remote object must already be owned by the same Terraform manager,
+manager instance, and service-account principal. Console-managed policies must
+first be adopted explicitly with `forge_policy_authority`. LLM Gateway service
+accounts, managed access overrides, and device identity assignments do not
+support import; create them with Terraform or leave their existing lifecycle
+outside Terraform.
+
+Destroy is intentionally recoverable/auditable rather than a hard delete:
+policy resources are disabled and tombstoned, LLM Gateway service accounts are
+disabled, managed overrides are removed, and device identity assignments are
+cleared. A tombstoned policy ID cannot be reused.
+
 Forge atomically binds a new policy to `manager_id`, `manager_instance`, and the
 authenticated service-account principal.
 Console and ordinary API mutation paths reject Terraform-managed policies, and
@@ -140,6 +183,15 @@ The readable manager values are a coordination and drift contract, while the
 server-bound service-account principal is the ownership boundary. Copying the
 manager headers to another credential does not grant access. Restrict tokens
 with `policies:read` and `policies:write` to trusted automation.
+
+Organization owners can use **Break glass** from the read-only console policy
+view during an incident. The console requires a 10-1,024 character reason,
+creates a forward Forge-managed revision, writes a `policy_family.break_glass`
+organization audit event, clears the Terraform manager binding, and unlocks
+console editing. The previous Terraform state cannot silently overwrite that
+revision: refresh or plan fails with an authority conflict until Terraform
+explicitly claims or imports authority again through the reviewed authority
+workflow.
 
 The provider requires HTTPS except for localhost, bounds responses to 4 MiB,
 never logs the token, retries bounded idempotent reads/updates/deletes on 429 and

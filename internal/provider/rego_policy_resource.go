@@ -400,12 +400,16 @@ func (r *regoPolicyResource) apply(ctx context.Context, m regoPolicyModel, revis
 	if diagnostics.HasError() {
 		return
 	}
-	validation, err := r.client.ValidatePolicyPlan(ctx, r.family, definition, sourceRef, revision)
-	if err != nil {
-		diagnostics.AddError("Refresh Forge policy plan validation", err.Error())
-		return
+	validationToken := m.ValidationToken.ValueString()
+	if validationToken == "" {
+		validation, err := r.client.ValidatePolicyPlan(ctx, r.family, definition, sourceRef, revision)
+		if err != nil {
+			diagnostics.AddError("Refresh Forge policy plan validation", err.Error())
+			return
+		}
+		validationToken = validation.ValidationToken
 	}
-	body := map[string]any{"definition": definition, "expectedRevision": revision, "sourceRef": sourceRef, "validationToken": validation.ValidationToken}
+	body := map[string]any{"definition": definition, "expectedRevision": revision, "sourceRef": sourceRef, "validationToken": validationToken}
 	method, target := http.MethodPost, r.path
 	if revision > 0 {
 		method, target = http.MethodPut, target+"/"+url.PathEscape(m.ID.ValueString())

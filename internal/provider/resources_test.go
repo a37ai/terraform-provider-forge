@@ -163,6 +163,62 @@ func TestContentRegoResourceLowersReadableReferencesAndPinsDigest(t *testing.T) 
 	}
 }
 
+func TestPolicyApplyUsesReviewedPlanValidationToken(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/headless/v1/organizations/org.test/policy-plans/validate" {
+			t.Fatalf("apply revalidated policy plan instead of using the reviewed plan token")
+		}
+		if r.Method != http.MethodPut || r.URL.Path != "/api/headless/v1/organizations/org.test/content-policies/p" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["validationToken"] != "reviewed-plan-token" {
+			t.Fatalf("validationToken=%v, want reviewed plan token", body["validationToken"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"item": map[string]any{"id": "p", "currentRevision": 2, "definitionSha256": "server", "definition": body["definition"], "sourceRef": body["sourceRef"]}})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, "org.test", "secret", "workspace", "instance", "test", 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := &regoPolicyResource{client: client, family: "content", path: "content-policies"}
+	var diagnostics diag.Diagnostics
+	m := regoPolicyModel{
+		ID:                    types.StringValue("p"),
+		Name:                  types.StringValue("Reviewed token"),
+		Description:           types.StringValue("Updated by a saved Terraform plan."),
+		Enabled:               types.BoolValue(true),
+		AcknowledgeBroadScope: types.BoolValue(true),
+		Users:                 emptySet(),
+		Groups:                emptySet(),
+		ServiceAccounts:       emptySet(),
+		Agents:                emptySet(),
+		Products:              emptySet(),
+		UseCases:              emptySet(),
+		ComplianceFrameworks:  emptySet(),
+		Labels:                emptySet(),
+		UserDirectoryIDs:      types.MapNull(types.StringType),
+		GroupDirectoryIDs:     types.MapNull(types.StringType),
+		EvaluateOn:            types.ListValueMust(types.StringType, []attr.Value{types.StringValue("prompt")}),
+		Action:                types.StringValue("block"),
+		Conditions:            dynamicFromGo(map[string]any{"field": "request.prompt", "op": "contains", "value": "secret"}, &diagnostics),
+		CurrentRevision:       types.Int64Value(1),
+		ValidationToken:       types.StringValue("reviewed-plan-token"),
+	}
+	resource.apply(context.Background(), m, 1, &diagnostics, func(value regoPolicyModel) { m = value })
+	if diagnostics.HasError() {
+		t.Fatalf("diagnostics=%v", diagnostics)
+	}
+	if m.CurrentRevision.ValueInt64() != 2 {
+		t.Fatalf("current revision=%d, want 2", m.CurrentRevision.ValueInt64())
+	}
+}
+
 func TestQualifiedSelectorRejectsQualifierForUnlistedName(t *testing.T) {
 	var diagnostics diag.Diagnostics
 	_ = qualifiedSelectorValues(context.Background(), stringSet("alice@example.com"), stringMap(map[string]string{"bob@example.com": "directory-primary"}), "user", &diagnostics)
