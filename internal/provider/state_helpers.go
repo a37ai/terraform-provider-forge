@@ -104,14 +104,6 @@ func setStringStateDefaultEmpty(ctx context.Context, value any, diagnostics *dia
 	return setStringState(ctx, value, diagnostics)
 }
 
-func setStringStatePreserveConfiguredNull(ctx context.Context, value any, configured types.Set, diagnostics *diag.Diagnostics) types.Set {
-	result := setStringState(ctx, value, diagnostics)
-	if configured.IsNull() && !result.IsNull() && !result.IsUnknown() && len(result.Elements()) == 0 {
-		return types.SetNull(types.StringType)
-	}
-	return result
-}
-
 func qualifiedSelectorState(ctx context.Context, value any, diagnostics *diag.Diagnostics) (types.Set, types.Map) {
 	if value == nil {
 		return types.SetValueMust(types.StringType, nil), types.MapValueMust(types.StringType, nil)

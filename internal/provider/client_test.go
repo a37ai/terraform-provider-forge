@@ -165,6 +165,11 @@ func TestClientRetriesOnlyExplicitlyIdempotentPosts(t *testing.T) {
 		t.Fatalf("authority POST attempts=%d", attempts.Load())
 	}
 	attempts.Store(0)
+	_ = client.Do(context.Background(), http.MethodPost, "resources/res_1/credentials", map[string]any{"secret": "write-only"}, nil)
+	if attempts.Load() != 4 {
+		t.Fatalf("Resource credential create attempts=%d", attempts.Load())
+	}
+	attempts.Store(0)
 	_ = client.Do(context.Background(), http.MethodPost, "unrelated-action", map[string]any{}, nil)
 	if attempts.Load() != 1 {
 		t.Fatalf("non-idempotent POST attempts=%d", attempts.Load())

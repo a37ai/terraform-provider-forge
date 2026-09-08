@@ -5,7 +5,8 @@ description: 'Manage Forge policies and LLM Gateway profiles with exclusive Terr
 
 # Forge provider
 
-The provider manages Forge policy resources and LLM Gateway access profiles.
+The provider manages Forge policies, governed Resources, their upstream
+credentials, and LLM Gateway access profiles.
 Read-only data sources resolve customer-visible users, groups, agents, AI
 products, integrations, registry objects, and gateway providers without making
 customers copy opaque Forge IDs.
@@ -32,10 +33,19 @@ stable: Forge binds ownership to them and to the authenticated service-account
 principal, so copying manager values to another credential does not grant
 access.
 
+Resource management requires `resources:read` and `resources:write`. Writing
+upstream credentials also requires `resource_credentials:write`; this narrow
+scope is intentionally separate from policy management.
+
 ## Resources
 
 - `forge_content_policy` and `forge_access_policy` manage typed native or
   `forge.rego.v1` policies.
+- `forge_resource` manages an HTTP or PostgreSQL destination.
+- `forge_resource_credential` manages how Forge authenticates to that
+  destination. Its `secret` requires Terraform 1.11 or newer; supply it through
+  an ephemeral, sensitive variable to keep it out of saved plans and state.
+  Increment `secret_version` to rotate it.
 - `forge_mcp_acl` and `forge_skill_acl` manage readable registry ACLs.
 - `forge_llm_gateway_access_profile` atomically manages model patterns and
   provider routes. Caller assignment is intentionally separate: after apply,

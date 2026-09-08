@@ -80,6 +80,23 @@ func validateRegoPolicyConfig(ctx context.Context, family string, m regoPolicyMo
 	if family == "access" && action != "require_approval" && !m.ApprovalMode.IsNull() && !m.ApprovalMode.IsUnknown() {
 		problems = append(problems, "approval_mode is only valid when action is require_approval")
 	}
+	if family == "access" && action == "require_approval" && !m.EnforcementSurfaces.IsNull() && !m.EnforcementSurfaces.IsUnknown() {
+		var surfaces []string
+		_ = m.EnforcementSurfaces.ElementsAs(ctx, &surfaces, false)
+		for _, surface := range surfaces {
+			if surface == "resource_proxy" {
+				problems = append(problems, "require_approval is not supported for resource_proxy")
+				break
+			}
+		}
+	}
+	if family == "access" && !m.Enforcement.IsNull() && !m.Enforcement.IsUnknown() && m.Enforcement.ValueString() == "monitor" && !m.EnforcementSurfaces.IsNull() && !m.EnforcementSurfaces.IsUnknown() {
+		var surfaces []string
+		_ = m.EnforcementSurfaces.ElementsAs(ctx, &surfaces, false)
+		if len(surfaces) != 1 || surfaces[0] != "resource_proxy" {
+			problems = append(problems, "enforcement = monitor currently requires enforcement_surfaces = [\"resource_proxy\"]")
+		}
+	}
 	if family == "content" && action == "redact" {
 		strategy := m.RedactionStrategy.ValueString()
 		if strategy == "" {

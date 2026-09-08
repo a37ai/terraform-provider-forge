@@ -278,7 +278,7 @@ func (c *Client) Do(ctx context.Context, method, path string, requestBody, respo
 		req.Header.Set("X-Forge-Terraform-Instance", c.managerInstance)
 		if idempotencyKey != "" {
 			req.Header.Set("Idempotency-Key", idempotencyKey)
-			req.Header.Set("X-Forge-Reason", "terraform policy reconciliation")
+			req.Header.Set("X-Forge-Reason", "terraform reconciliation")
 			req.Header.Set("X-Forge-Confirm", "true")
 		}
 		response, err = c.http.Do(req)
@@ -375,8 +375,9 @@ func newIdempotencyKey() (string, error) {
 
 func retryableRequest(method, path string) bool {
 	clean := strings.TrimLeft(path, "/")
-	idempotentCreate := map[string]bool{"content-policies": true, "access-policies": true, "skill-acls": true}
-	return method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete || (method == http.MethodPost && (strings.HasPrefix(clean, "policy-authority/") || clean == "policy-code/rego/validate" || clean == "policy-plans/validate" || idempotentCreate[clean]))
+	idempotentCreate := map[string]bool{"content-policies": true, "access-policies": true, "skill-acls": true, "resources": true}
+	resourceCredentialCreate := strings.HasPrefix(clean, "resources/") && strings.HasSuffix(clean, "/credentials")
+	return method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete || (method == http.MethodPost && (strings.HasPrefix(clean, "policy-authority/") || clean == "policy-code/rego/validate" || clean == "policy-plans/validate" || idempotentCreate[clean] || resourceCredentialCreate))
 }
 
 func waitForRetry(ctx context.Context, attempt int, retryAfter string) error {
