@@ -1,18 +1,30 @@
 # Policy example
 
-This example manages representative Content and Access policies, an LLM
-Gateway access profile, and an MCP ACL through the published Forge provider.
+This example manages representative Content and Access policies, HTTPS and
+PostgreSQL Resources with credentials, an LLM Gateway access profile, and an
+MCP ACL.
 
 Before running it:
 
-1. Create a Forge service account with the **Terraform policy management**
-   preset and export its one-time secret as `FORGE_API_TOKEN`.
-2. Replace `org.example` with the organization key from the Forge Console URL.
-3. Replace `OpenAI`, `github`, and `Engineering` with exact names that already
+1. Use Terraform 1.11 or newer. The example uses an ephemeral, sensitive
+   variable with a write-only attribute to keep the credential out of saved
+   plans and state.
+2. Create a Forge service account with the **Terraform policy management**
+   preset, add `resources:read`, `resources:write`, and
+   `resource_credentials:write`, then export its one-time secret as
+   `FORGE_API_TOKEN`.
+3. Set `TF_VAR_production_database_password` and `TF_VAR_internal_api_token`
+   for the example Resources.
+4. Replace `org.example` with the organization key from the Forge Console URL.
+5. Replace `OpenAI`, `github`, and `Engineering` with exact names that already
    exist in that organization. Forge deliberately fails on missing or ambiguous
    selectors.
-4. Keep `manager_id` and `manager_instance` stable for the lifetime of the
+6. Keep `manager_id` and `manager_instance` stable for the lifetime of the
    workspace.
+
+Changing a credential secret requires incrementing `secret_version`. The
+secret is sent only during creation or that explicit rotation and is never
+stored in Terraform plan or state.
 
 Then run:
 

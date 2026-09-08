@@ -44,6 +44,7 @@ type regoPolicyModel struct {
 	ComplianceFrameworks  types.Set     `tfsdk:"compliance_frameworks"`
 	Labels                types.Set     `tfsdk:"labels"`
 	Enabled               types.Bool    `tfsdk:"enabled"`
+	Enforcement           types.String  `tfsdk:"enforcement"`
 	Severity              types.String  `tfsdk:"severity"`
 	AcknowledgeBroadScope types.Bool    `tfsdk:"acknowledge_broad_scope"`
 	EnforcementSurfaces   types.Set     `tfsdk:"enforcement_surfaces"`
@@ -57,6 +58,7 @@ type regoPolicyModel struct {
 	GroupDirectoryIDs     types.Map     `tfsdk:"group_directory_ids"`
 	ServiceAccounts       types.Set     `tfsdk:"service_accounts"`
 	Devices               types.Set     `tfsdk:"devices"`
+	Resources             types.Set     `tfsdk:"resources"`
 	Agents                types.Set     `tfsdk:"agents"`
 	Products              types.Set     `tfsdk:"products"`
 	EvaluateOn            types.List    `tfsdk:"evaluate_on"`
@@ -124,7 +126,7 @@ func (r *regoPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		"conditions":              schema.DynamicAttribute{Optional: true, Description: "A native HCL condition object using field/op/value leaves; all, any, and not; and Content-only stateful operators. Set exactly one of conditions or module."},
 		"custom_fields":           schema.DynamicAttribute{Optional: true, Description: "Immutable typed descriptors for registered nested tool.input fields used by native content-policy conditions."},
 		"except":                  schema.DynamicAttribute{Optional: true, Description: "Legacy compatibility field for one anonymous exception. Prefer exceptions for named, reasoned, and optionally expiring policy exceptions."},
-		"exceptions":              schema.DynamicAttribute{Optional: true, Description: "Named scoped exceptions with id, reason, optional RFC3339 expiresAt, and a canonical conditions tree."},
+		"exceptions":              schema.DynamicAttribute{Optional: true, Description: "Named scoped exceptions with an ID, reason, optional expiration, and conditions."},
 		"action":                  schema.StringAttribute{Required: true},
 		"message":                 schema.StringAttribute{Optional: true, Validators: nonempty},
 		"auto_approve_on_request": schema.BoolAttribute{Optional: true},
@@ -147,7 +149,7 @@ func (r *regoPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		"module_sha256":      schema.StringAttribute{Computed: true},
 	}
 	if r.family == "content" {
-		for _, key := range []string{"severity", "enforcement_surfaces", "runtime", "notification", "approval_mode", "remediation", "devices", "enforced_by", "remediation_action", "remediation_target"} {
+		for _, key := range []string{"enforcement", "severity", "enforcement_surfaces", "runtime", "notification", "approval_mode", "remediation", "devices", "enforced_by", "remediation_action", "remediation_target"} {
 			delete(attrs, key)
 		}
 		attrs["acknowledge_broad_scope"] = schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Required before enabling a broad disruptive Content policy. Empty scope means all applicable subjects, agents, and products."}
@@ -158,18 +160,21 @@ func (r *regoPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		attrs["exceptions"] = schema.DynamicAttribute{Optional: true, Description: "Named scoped exceptions with id, reason, optional RFC3339 expiresAt, and a canonical conditions tree. Content exceptions are not lowered to endpoint authorization, so configuring any causes the endpoint Content decision to be omitted."}
 		attrs["action"] = schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf(canonicalContentActions...)}}
 	} else {
-		for _, key := range []string{"service_accounts", "evaluate_on", "agents", "products", "custom_fields", "message", "auto_approve_on_request", "redaction_replacement", "redaction_strategy", "redaction_paths", "redaction_keep_start", "redaction_keep_end", "redaction_mask_character", "redaction_salt_ref", "redaction_fake_subtype", "redaction_apply_to", "redaction_pattern", "filter_collection_path", "filter_path", "filter_operator", "filter_value", "filter_on_unavailable", "remediation_action", "remediation_target"} {
+		for _, key := range []string{"evaluate_on", "products", "custom_fields", "message", "auto_approve_on_request", "redaction_replacement", "redaction_strategy", "redaction_paths", "redaction_keep_start", "redaction_keep_end", "redaction_mask_character", "redaction_salt_ref", "redaction_fake_subtype", "redaction_apply_to", "redaction_pattern", "filter_collection_path", "filter_path", "filter_operator", "filter_value", "filter_on_unavailable", "remediation_action", "remediation_target"} {
 			delete(attrs, key)
 		}
+		attrs["enforcement"] = schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("enforce"), Validators: []validator.String{stringvalidator.OneOf("enforce", "monitor")}, Description: "Enforce matching outcomes, or monitor what would have happened for Resource traffic."}
+		attrs["service_accounts"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}, Description: "Service account IDs governed by this Access policy."}
 		attrs["severity"] = schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("medium"), Validators: []validator.String{stringvalidator.OneOf(canonicalAccessSeverities...)}}
 		attrs["acknowledge_broad_scope"] = schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Required before enabling a broad disruptive Access policy."}
-		attrs["enforcement_surfaces"] = schema.SetAttribute{Required: true, ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeBetween(1, 3), setvalidator.ValueStringsAre(stringvalidator.OneOf(canonicalAccessEnforcementSurfaces...))}, Description: "Exact execution surfaces: inline_hook, endpoint_route, or provider."}
-		attrs["runtime"] = schema.DynamicAttribute{Optional: true, Description: "Canonical Access runtime object: candidateMode, detectionMode, detectionLatencyMs, timeoutBehavior, failBehavior, and confidenceThreshold."}
-		attrs["notification"] = schema.DynamicAttribute{Optional: true, Description: "Canonical structured Access notification object."}
+		attrs["enforcement_surfaces"] = schema.SetAttribute{Required: true, ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeBetween(1, 4), setvalidator.ValueStringsAre(stringvalidator.OneOf(canonicalAccessEnforcementSurfaces...))}, Description: "Exact execution surfaces: inline_hook, endpoint_route, provider, or resource_proxy."}
+		attrs["runtime"] = schema.DynamicAttribute{Optional: true, Description: "Access runtime settings."}
+		attrs["notification"] = schema.DynamicAttribute{Optional: true, Description: "Notification shown when this policy applies."}
 		attrs["approval_mode"] = schema.StringAttribute{Optional: true, Validators: []validator.String{stringvalidator.OneOf(canonicalAccessApprovalModes...)}}
-		attrs["remediation"] = schema.DynamicAttribute{Optional: true, Description: "Canonical Access remediation object with triggerPhase, applyWhenClassification, and one or more actions."}
-		attrs["exceptions"] = schema.DynamicAttribute{Optional: true, Description: "Named scoped exceptions with id, reason, optional RFC3339 expiresAt, and a canonical conditions tree. An expiring or otherwise unsupported exception emits no endpoint input, rather than broadening endpoint enforcement."}
+		attrs["remediation"] = schema.DynamicAttribute{Optional: true, Description: "Actions Forge may take when this policy applies."}
+		attrs["exceptions"] = schema.DynamicAttribute{Optional: true, Description: "Named scoped exceptions with an ID, reason, optional expiration, and conditions."}
 		attrs["devices"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}}
+		attrs["resources"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}, Description: "Stable Forge Resource IDs governed by this Access policy."}
 		attrs["enforced_by"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}, Description: "Exact integration names. Forge resolves them authoritatively and errors on missing or ambiguous matches."}
 		attrs["action"] = schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf(canonicalAccessActions...)}}
 	}
@@ -195,6 +200,11 @@ func (r *regoPolicyResource) ModifyPlan(ctx context.Context, request resource.Mo
 	var model regoPolicyModel
 	response.Diagnostics.Append(r.readModel(ctx, request.Plan, &model)...)
 	if response.Diagnostics.HasError() {
+		return
+	}
+	// A Resource created in the same graph has an unknown ID during planning.
+	// Defer server validation until apply, after Terraform resolves that ID.
+	if r.family == "access" && setContainsUnknown(model.Resources) {
 		return
 	}
 	if !model.ValidationToken.IsNull() && !model.ValidationToken.IsUnknown() && model.ValidationToken.ValueString() != "" {
@@ -231,6 +241,18 @@ func (r *regoPolicyResource) ModifyPlan(ctx context.Context, request resource.Mo
 		return
 	}
 	response.Diagnostics.Append(response.Plan.SetAttribute(ctx, path.Root("validation_token"), validation.ValidationToken)...)
+}
+
+func setContainsUnknown(value types.Set) bool {
+	if value.IsUnknown() {
+		return true
+	}
+	for _, element := range value.Elements() {
+		if element.IsUnknown() {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *regoPolicyResource) Create(ctx context.Context, q resource.CreateRequest, p *resource.CreateResponse) {
@@ -279,8 +301,7 @@ func (r *regoPolicyResource) Read(ctx context.Context, q resource.ReadRequest, p
 func (r *regoPolicyResource) flatten(ctx context.Context, item policyAPIItem, m *regoPolicyModel, diagnostics *diag.Diagnostics) {
 	definition, selectors := item.Definition, selectorObject(item)
 	scope, scopeSelectors := object(definition["appliesTo"]), object(selectors["appliesTo"])
-	configuredDevices := m.Devices
-	m.Devices, m.Agents, m.Products = types.SetNull(types.StringType), types.SetNull(types.StringType), types.SetNull(types.StringType)
+	m.Devices, m.Resources, m.Agents, m.Products = types.SetNull(types.StringType), types.SetNull(types.StringType), types.SetNull(types.StringType), types.SetNull(types.StringType)
 	m.EvaluateOn = types.ListNull(types.StringType)
 	m.RedactionPaths = types.SetNull(types.StringType)
 	m.RedactionReplacement, m.RedactionStrategy = types.StringNull(), types.StringNull()
@@ -290,7 +311,7 @@ func (r *regoPolicyResource) flatten(ctx context.Context, item policyAPIItem, m 
 	m.FilterCollectionPath, m.FilterPath, m.FilterOperator = types.StringNull(), types.StringNull(), types.StringNull()
 	m.FilterValue, m.FilterOnUnavailable = types.DynamicNull(), types.StringNull()
 	m.RemediationAction, m.RemediationTarget = types.StringNull(), types.StringNull()
-	m.Severity, m.ApprovalMode = types.StringNull(), types.StringNull()
+	m.Enforcement, m.Severity, m.ApprovalMode = types.StringNull(), types.StringNull(), types.StringNull()
 	m.AcknowledgeBroadScope = types.BoolNull()
 	m.EnforcementSurfaces = types.SetNull(types.StringType)
 	m.Runtime, m.Notification, m.Remediation = types.DynamicNull(), types.DynamicNull(), types.DynamicNull()
@@ -356,6 +377,7 @@ func (r *regoPolicyResource) flatten(ctx context.Context, item policyAPIItem, m 
 		m.FilterValue = dynamicFromGo(removeWhere["value"], diagnostics)
 		m.FilterOnUnavailable = optionalString(filter["onUnavailable"])
 	} else {
+		m.Enforcement = types.StringValue(firstNonEmptyTerraformString(stringFrom(definition["enforcement"]), "enforce"))
 		m.Severity = types.StringValue(firstNonEmptyTerraformString(stringFrom(definition["severity"]), "medium"))
 		m.AcknowledgeBroadScope = types.BoolValue(boolFrom(definition["acknowledgeBroadScope"]))
 		m.EnforcementSurfaces = setStringState(ctx, definition["enforcementSurfaces"], diagnostics)
@@ -366,7 +388,9 @@ func (r *regoPolicyResource) flatten(ctx context.Context, item policyAPIItem, m 
 		if approval := object(definition["approval"]); approval != nil && stringFrom(approval["mode"]) != "" {
 			m.ApprovalMode = types.StringValue(stringFrom(approval["mode"]))
 		}
-		m.Devices = setStringStatePreserveConfiguredNull(ctx, selected(scopeSelectors, scope, "devices"), configuredDevices, diagnostics)
+		m.Devices = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "devices"), diagnostics)
+		m.ServiceAccounts = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "serviceAccounts"), diagnostics)
+		m.Resources = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "resources"), diagnostics)
 		m.EnforcedBy = setStringStateDefaultEmpty(ctx, selected(selectors, definition, "enforcedBy"), diagnostics)
 		remediation := object(definition["remediation"])
 		_ = remediation
@@ -448,10 +472,7 @@ func (r *regoPolicyResource) buildMutation(ctx context.Context, m regoPolicyMode
 	if diagnostics.HasError() {
 		return nil, nil
 	}
-	var serviceAccounts []string
-	if r.family == "content" {
-		serviceAccounts = toStrings(m.ServiceAccounts)
-	}
+	serviceAccounts := toStrings(m.ServiceAccounts)
 	module := m.Module.ValueString()
 	var evaluationPoints []string
 	if r.family == "content" {
@@ -581,6 +602,9 @@ func (r *regoPolicyResource) buildMutation(ctx context.Context, m regoPolicyMode
 		}
 	} else {
 		scope["devices"] = toStrings(m.Devices)
+		scope["serviceAccounts"] = serviceAccounts
+		scope["resources"] = toStrings(m.Resources)
+		definition["enforcement"] = firstNonEmptyTerraformString(m.Enforcement.ValueString(), "enforce")
 		definition["severity"] = firstNonEmptyTerraformString(m.Severity.ValueString(), "medium")
 		definition["acknowledgeBroadScope"] = m.AcknowledgeBroadScope.ValueBool()
 		definition["enforcementSurfaces"] = toStrings(m.EnforcementSurfaces)
@@ -625,6 +649,8 @@ func (r *regoPolicyResource) buildMutation(ctx context.Context, m regoPolicyMode
 		scopeSelectors = nonemptyMap(scopeSelectors)
 	} else {
 		scopeSelectors["devices"] = toStrings(m.Devices)
+		scopeSelectors["serviceAccounts"] = serviceAccounts
+		scopeSelectors["resources"] = toStrings(m.Resources)
 		scopeSelectors = nonemptyMap(scopeSelectors)
 	}
 	selectors := map[string]any{"appliesTo": scopeSelectors}

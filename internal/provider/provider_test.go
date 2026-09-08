@@ -33,6 +33,8 @@ func TestProviderRegistersGatewayIdentityResources(t *testing.T) {
 		got[metadata.TypeName] = true
 	}
 	for _, name := range []string{
+		"forge_resource",
+		"forge_resource_credential",
 		"forge_llm_gateway_service_account",
 		"forge_llm_gateway_managed_access_override",
 		"forge_device_gateway_identity_assignment",

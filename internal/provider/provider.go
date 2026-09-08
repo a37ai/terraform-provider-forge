@@ -72,7 +72,7 @@ func (p *forgeProvider) Configure(ctx context.Context, request provider.Configur
 }
 
 func (p *forgeProvider) Resources(_ context.Context) []func() resource.Resource {
-	return []func() resource.Resource{newContentPolicyResource, newAccessPolicyResource, newLLMGatewayAccessProfileResource, newLLMGatewayServiceAccountResource, newLLMGatewayManagedAccessOverrideResource, newDeviceGatewayIdentityAssignmentResource, newMCPACLResource, newSkillACLResource, newPolicyAuthorityResource}
+	return []func() resource.Resource{newContentPolicyResource, newAccessPolicyResource, newResourceProxyResource, newResourceCredentialResource, newLLMGatewayAccessProfileResource, newLLMGatewayServiceAccountResource, newLLMGatewayManagedAccessOverrideResource, newDeviceGatewayIdentityAssignmentResource, newMCPACLResource, newSkillACLResource, newPolicyAuthorityResource}
 }
 func (p *forgeProvider) DataSources(context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{

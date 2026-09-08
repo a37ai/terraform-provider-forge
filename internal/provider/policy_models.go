@@ -67,6 +67,7 @@ type accessPolicyModel struct {
 	ComplianceFrameworks  types.Set     `tfsdk:"compliance_frameworks"`
 	Labels                types.Set     `tfsdk:"labels"`
 	Enabled               types.Bool    `tfsdk:"enabled"`
+	Enforcement           types.String  `tfsdk:"enforcement"`
 	Severity              types.String  `tfsdk:"severity"`
 	AcknowledgeBroadScope types.Bool    `tfsdk:"acknowledge_broad_scope"`
 	EnforcementSurfaces   types.Set     `tfsdk:"enforcement_surfaces"`
@@ -79,6 +80,8 @@ type accessPolicyModel struct {
 	UserDirectoryIDs      types.Map     `tfsdk:"user_directory_ids"`
 	GroupDirectoryIDs     types.Map     `tfsdk:"group_directory_ids"`
 	Devices               types.Set     `tfsdk:"devices"`
+	ServiceAccounts       types.Set     `tfsdk:"service_accounts"`
+	Resources             types.Set     `tfsdk:"resources"`
 	Action                types.String  `tfsdk:"action"`
 	Module                types.String  `tfsdk:"module"`
 	Conditions            types.Dynamic `tfsdk:"conditions"`
@@ -110,8 +113,8 @@ func (r *regoPolicyResource) readModel(ctx context.Context, source terraformMode
 	diagnostics := source.Get(ctx, &model)
 	*out = regoPolicyModel{
 		ID: model.ID, Name: model.Name, Description: model.Description, Rationale: model.Rationale, UseCases: model.UseCases, ComplianceFrameworks: model.ComplianceFrameworks, Labels: model.Labels,
-		Enabled: model.Enabled, Severity: model.Severity, AcknowledgeBroadScope: model.AcknowledgeBroadScope, EnforcementSurfaces: model.EnforcementSurfaces, Runtime: model.Runtime, Notification: model.Notification, ApprovalMode: model.ApprovalMode, Remediation: model.Remediation,
-		Users: model.Users, Groups: model.Groups, UserDirectoryIDs: model.UserDirectoryIDs, GroupDirectoryIDs: model.GroupDirectoryIDs, Devices: model.Devices, Action: model.Action, Module: model.Module, Conditions: model.Conditions, Except: model.Except, Exceptions: model.Exceptions, EnforcedBy: model.EnforcedBy,
+		Enabled: model.Enabled, Enforcement: model.Enforcement, Severity: model.Severity, AcknowledgeBroadScope: model.AcknowledgeBroadScope, EnforcementSurfaces: model.EnforcementSurfaces, Runtime: model.Runtime, Notification: model.Notification, ApprovalMode: model.ApprovalMode, Remediation: model.Remediation,
+		Users: model.Users, Groups: model.Groups, UserDirectoryIDs: model.UserDirectoryIDs, GroupDirectoryIDs: model.GroupDirectoryIDs, Devices: model.Devices, ServiceAccounts: model.ServiceAccounts, Resources: model.Resources, Action: model.Action, Module: model.Module, Conditions: model.Conditions, Except: model.Except, Exceptions: model.Exceptions, EnforcedBy: model.EnforcedBy,
 		CurrentRevision: model.CurrentRevision, DefinitionSHA: model.DefinitionSHA, ValidationToken: model.ValidationToken, ModuleSHA: model.ModuleSHA,
 	}
 	return diagnostics
@@ -131,8 +134,8 @@ func (r *regoPolicyResource) stateModel(model regoPolicyModel) any {
 	}
 	return accessPolicyModel{
 		ID: model.ID, Name: model.Name, Description: model.Description, Rationale: model.Rationale, UseCases: model.UseCases, ComplianceFrameworks: model.ComplianceFrameworks, Labels: model.Labels,
-		Enabled: model.Enabled, Severity: model.Severity, AcknowledgeBroadScope: model.AcknowledgeBroadScope, EnforcementSurfaces: model.EnforcementSurfaces, Runtime: model.Runtime, Notification: model.Notification, ApprovalMode: model.ApprovalMode, Remediation: model.Remediation,
-		Users: model.Users, Groups: model.Groups, UserDirectoryIDs: model.UserDirectoryIDs, GroupDirectoryIDs: model.GroupDirectoryIDs, Devices: model.Devices, Action: model.Action, Module: model.Module, Conditions: model.Conditions, Except: model.Except, Exceptions: model.Exceptions, EnforcedBy: model.EnforcedBy,
+		Enabled: model.Enabled, Enforcement: model.Enforcement, Severity: model.Severity, AcknowledgeBroadScope: model.AcknowledgeBroadScope, EnforcementSurfaces: model.EnforcementSurfaces, Runtime: model.Runtime, Notification: model.Notification, ApprovalMode: model.ApprovalMode, Remediation: model.Remediation,
+		Users: model.Users, Groups: model.Groups, UserDirectoryIDs: model.UserDirectoryIDs, GroupDirectoryIDs: model.GroupDirectoryIDs, Devices: model.Devices, ServiceAccounts: model.ServiceAccounts, Resources: model.Resources, Action: model.Action, Module: model.Module, Conditions: model.Conditions, Except: model.Except, Exceptions: model.Exceptions, EnforcedBy: model.EnforcedBy,
 		CurrentRevision: model.CurrentRevision, DefinitionSHA: model.DefinitionSHA, ValidationToken: model.ValidationToken, ModuleSHA: model.ModuleSHA,
 	}
 }

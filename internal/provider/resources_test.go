@@ -33,6 +33,15 @@ func TestLLMGatewayPlanExpectedVersion(t *testing.T) {
 	}
 }
 
+func TestSetContainsUnknown(t *testing.T) {
+	if !setContainsUnknown(types.SetValueMust(types.StringType, []attr.Value{types.StringUnknown()})) {
+		t.Fatal("unknown Resource reference was treated as plan-time known")
+	}
+	if setContainsUnknown(types.SetValueMust(types.StringType, []attr.Value{types.StringValue("res_known")})) {
+		t.Fatal("known Resource reference was treated as unknown")
+	}
+}
+
 func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +84,7 @@ func TestTerraformExamplesParse(t *testing.T) {
 func TestPolicySchemasExposeOnlyTheirFamilySurface(t *testing.T) {
 	for family, forbidden := range map[string][]string{
 		"content": {"severity", "enforcement_surfaces", "runtime", "notification", "approval_mode", "remediation", "devices", "enforced_by", "remediation_action", "remediation_target"},
-		"access":  {"service_accounts", "evaluate_on", "agents", "products", "custom_fields", "message", "auto_approve_on_request", "redaction_strategy", "redaction_pattern", "filter_path", "remediation_action", "remediation_target"},
+		"access":  {"agents", "evaluate_on", "products", "custom_fields", "message", "auto_approve_on_request", "redaction_strategy", "redaction_pattern", "filter_path", "remediation_action", "remediation_target"},
 	} {
 		policyResource := &regoPolicyResource{family: family}
 		var response resource.SchemaResponse
@@ -83,6 +92,13 @@ func TestPolicySchemasExposeOnlyTheirFamilySurface(t *testing.T) {
 		for _, name := range forbidden {
 			if _, exists := response.Schema.Attributes[name]; exists {
 				t.Errorf("%s schema exposes %s", family, name)
+			}
+		}
+		if family == "access" {
+			for _, name := range []string{"enforcement", "service_accounts"} {
+				if _, exists := response.Schema.Attributes[name]; !exists {
+					t.Errorf("access schema is missing %s", name)
+				}
 			}
 		}
 	}
@@ -354,8 +370,9 @@ func TestPolicyResourcesPreserveAllCanonicalMetadataAndExceptions(t *testing.T) 
 		Description: types.StringValue("Description"), Rationale: types.StringValue("Rationale"), Enabled: types.BoolValue(true),
 		UseCases: stringSet("Organizational Access"), ComplianceFrameworks: stringSet("NIST"), Labels: stringSet("owner:security"),
 		Users: stringSet("alice@example.com"), Groups: emptySet(), UserDirectoryIDs: stringMap(nil), GroupDirectoryIDs: stringMap(nil),
-		Devices: stringSet("Finance MacBook"), ServiceAccounts: emptySet(), Agents: emptySet(), Products: emptySet(),
-		Action: types.StringValue("block"), Conditions: testDynamic(t, map[string]any{"field": "device.platform", "op": "eq", "value": "darwin"}),
+		Devices: stringSet("Finance MacBook"), ServiceAccounts: emptySet(), Agents: emptySet(), Products: emptySet(), Resources: stringSet("database-primary"),
+		EnforcementSurfaces: stringSet("resource_proxy"),
+		Action:              types.StringValue("block"), Conditions: testDynamic(t, map[string]any{"field": "device.platform", "op": "eq", "value": "darwin"}),
 		Except:     testDynamic(t, map[string]any{"field": "identity.user_id", "op": "eq", "value": "break-glass@example.com"}),
 		Exceptions: testDynamic(t, []any{map[string]any{"id": "exception:finance", "reason": "Approved finance workflow", "expiresAt": "2026-09-01T00:00:00Z", "conditions": map[string]any{"field": "identity.group_ids", "op": "contains", "value": "finance"}}}),
 		EnforcedBy: stringSet("CrowdStrike Falcon"), EvaluateOn: types.ListNull(types.StringType), Module: types.StringNull(),
@@ -394,6 +411,10 @@ func TestPolicyResourcesPreserveAllCanonicalMetadataAndExceptions(t *testing.T) 
 	if got := definition["enforcedBy"].([]string); len(got) != 1 || got[0] != "CrowdStrike Falcon" {
 		t.Fatalf("enforcedBy=%v", got)
 	}
+	scope := object(definition["appliesTo"])
+	if got := scope["resources"].([]string); len(got) != 1 || got[0] != "database-primary" {
+		t.Fatalf("resources=%v", got)
+	}
 	selectors := object(sourceRef["selectors"])
 	if got := selectors["enforcedBy"].([]string); len(got) != 1 || got[0] != "CrowdStrike Falcon" {
 		t.Fatalf("source selectors=%+v", selectors)
@@ -402,6 +423,9 @@ func TestPolicyResourcesPreserveAllCanonicalMetadataAndExceptions(t *testing.T) 
 	resource.flatten(context.Background(), policyAPIItem{Definition: definition}, &flattened, &diagnostics)
 	if diagnostics.HasError() {
 		t.Fatalf("flatten diagnostics=%v", diagnostics)
+	}
+	if got := flattened.Resources.Elements(); len(got) != 1 || got[0].(types.String).ValueString() != "database-primary" {
+		t.Fatalf("round-tripped resources=%v", got)
 	}
 	roundTrippedLegacy, err := terraformDynamicToGo(flattened.Except)
 	if err != nil {
@@ -431,7 +455,7 @@ func TestPolicyResourcesPreserveAllCanonicalMetadataAndExceptions(t *testing.T) 
 	}
 }
 
-func TestAccessRegoResourceOmitsUnsupportedServiceAccountsAndMapsNotification(t *testing.T) {
+func TestAccessRegoResourcePreservesResourceCallersAndMapsNotification(t *testing.T) {
 	var body map[string]any
 	var diagnostics diag.Diagnostics
 	module := "package forge.access\nmatch := {\"matched\": true}"
@@ -449,9 +473,9 @@ func TestAccessRegoResourceOmitsUnsupportedServiceAccountsAndMapsNotification(t 
 	m := regoPolicyModel{
 		ID: types.StringValue("access-a"), Name: types.StringValue("Access A"), Enabled: types.BoolValue(true),
 		Users: stringSet("alice@example.com"), Groups: emptySet(), Devices: stringSet("macbook-a"),
-		ServiceAccounts: types.SetNull(types.StringType), Agents: types.SetNull(types.StringType), Products: types.SetNull(types.StringType),
+		ServiceAccounts: stringSet("service_account_1"), Agents: types.SetNull(types.StringType), Products: types.SetNull(types.StringType),
 		EvaluateOn: types.ListNull(types.StringType), Action: types.StringValue("block"),
-		Severity: types.StringValue("high"), AcknowledgeBroadScope: types.BoolValue(false), EnforcementSurfaces: stringSet("inline_hook"),
+		Enforcement: types.StringValue("monitor"), Severity: types.StringValue("high"), AcknowledgeBroadScope: types.BoolValue(false), EnforcementSurfaces: stringSet("inline_hook"),
 		Notification: dynamicFromGo(map[string]any{"message": "Use the approved product", "notifyUser": true}, &diagnostics),
 		Module:       types.StringValue(module),
 	}
@@ -462,8 +486,11 @@ func TestAccessRegoResourceOmitsUnsupportedServiceAccountsAndMapsNotification(t 
 	}
 	definition := body["definition"].(map[string]any)
 	scope := definition["appliesTo"].(map[string]any)
-	if _, exists := scope["serviceAccounts"]; exists {
-		t.Fatalf("access scope included unsupported serviceAccounts: %+v", scope)
+	if got := scope["serviceAccounts"].([]any); len(got) != 1 || got[0] != "service_account_1" {
+		t.Fatalf("access scope lost service accounts: %+v", scope)
+	}
+	if definition["enforcement"] != "monitor" {
+		t.Fatalf("access enforcement mode was lost: %+v", definition)
 	}
 	if object(definition["notification"])["message"] != "Use the approved product" {
 		t.Fatalf("access notification was lost: %+v", definition)
@@ -714,6 +741,17 @@ func TestRegoPolicyConfigValidationCoversEnumsAndActionSpecificShapes(t *testing
 	accessApproval.ApprovalMode = types.StringValue("self_serve")
 	if got := validateRegoPolicyConfig(context.Background(), "access", accessApproval); len(got) == 0 {
 		t.Fatal("approval mode on a block policy must fail")
+	}
+	monitor := null("block")
+	monitor.EvaluateOn = types.ListNull(types.StringType)
+	monitor.Enforcement = types.StringValue("monitor")
+	monitor.EnforcementSurfaces = stringSet("endpoint_route")
+	if got := validateRegoPolicyConfig(context.Background(), "access", monitor); len(got) == 0 {
+		t.Fatal("monitor mode outside Resource traffic must fail")
+	}
+	monitor.EnforcementSurfaces = stringSet("resource_proxy")
+	if got := validateRegoPolicyConfig(context.Background(), "access", monitor); len(got) != 0 {
+		t.Fatalf("Resource monitor mode must be valid: %v", got)
 	}
 }
 
