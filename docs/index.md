@@ -39,9 +39,13 @@ scope is intentionally separate from policy management.
 
 ## Resources
 
-- `forge_content_policy` and `forge_access_policy` manage typed native or
-  `forge.rego.v1` policies.
-- `forge_resource` manages an HTTP or PostgreSQL destination.
+- `forge_content_policy`, `forge_access_policy`, and `forge_resource_policy`
+  manage typed native or `forge.rego.v1` policies.
+- `forge_resource` manages an HTTP, PostgreSQL, MySQL, or Redis destination.
+- `forge_resource_gateway` manages the customer-deployed runtime used for
+  direct and automatic Resource access.
+  Its deployment credential is created in Console and never enters Terraform
+  state.
 - `forge_resource_credential` manages how Forge authenticates to that
   destination. Its `secret` requires Terraform 1.11 or newer; supply it through
   an ephemeral, sensitive variable to keep it out of saved plans and state.
@@ -56,6 +60,17 @@ scope is intentionally separate from policy management.
 Terraform-owned objects show their manager in Console and cannot be edited or
 deleted there. Existing Console gateway profiles require
 `adopt_existing = true`; ordinary creates do not.
+
+Resource rules previously managed as `forge_access_policy` must be renamed to
+`forge_resource_policy`, with the obsolete
+`enforcement_surfaces = ["resource_proxy"]` attribute removed. Preserve the
+same policy ID, then move its state before planning:
+
+```sh
+terraform state mv \
+  'forge_access_policy.production_database' \
+  'forge_resource_policy.production_database'
+```
 
 ## Data sources
 

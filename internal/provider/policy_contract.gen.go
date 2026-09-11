@@ -7,7 +7,13 @@ var canonicalContentActions = []string{"allow", "block", "flag_for_review", "red
 
 var canonicalAccessActions = []string{"allow", "block", "flag_for_review", "require_approval"}
 
-var canonicalAccessEnforcementSurfaces = []string{"inline_hook", "endpoint_route", "provider", "resource_proxy"}
+var canonicalResourceActions = []string{"allow", "block", "flag_for_review", "redact", "filter", "require_approval"}
+
+var canonicalResourceDataTargets = []string{"http_request_body", "http_response_body", "postgres_result", "mysql_result"}
+
+var canonicalResourceEnforcement = []string{"enforce", "monitor"}
+
+var canonicalAccessEnforcementSurfaces = []string{"inline_hook", "endpoint_route", "provider"}
 
 var canonicalAccessSeverities = []string{"low", "medium", "high", "critical"}
 
@@ -21,7 +27,9 @@ var canonicalCountOperators = []string{"eq", "gt", "gte", "lt", "lte"}
 
 var canonicalContentFields = []string{"identity.user_id", "identity.group_ids", "identity.service_account_id", "request.prompt", "event.kind", "event.title", "event.summary", "event.labels", "event.severity", "tool.server_id", "tool.id", "tool.input", "tool.input.command", "tool.input.file_path", "tool.input.url", "tool.input.workdir", "tool.input.approval", "tool.input.env", "tool.input.surface_kind", "tool.input.surface_key", "tool.result", "response.content", "classification.sensitivity_labels", "classification.data_labels", "classification.categories", "classification.data_source_kinds", "classification.proof_strength", "classification.provider_actions", "classification.has_unresolved_sensitive_content", "mcp.server_id", "mcp.tool_id", "mcp.gateway_endpoint_id", "mcp.package_id", "mcp.package_version", "mcp.remote_url", "llm.model", "llm.provider", "llm.input_tokens", "llm.output_tokens"}
 
-var canonicalAccessFields = []string{"identity.user_id", "identity.group_ids", "device.id", "device.platform", "product.id", "provider.id", "destination.domain", "destination.ip", "destination.port", "destination.protocol", "process.id", "process.entrypoint_id", "process.name", "process.path", "process.local_port", "browser.extension_id", "browser.extension_identity_id", "browser.extension_surface", "browser.account_id", "browser.account_domain", "browser.account_state", "browser.account_truth_state", "classification.state", "route.posture", "account.posture", "account.access_state", "account.profile_id", "control.path_kind", "source.family", "source.capability", "source.health_state", "local_model.governance_state", "local_model.proof_level", "local_model.name", "resource.id", "resource.protocol", "request.http.method", "request.http.path", "request.postgres.database", "request.postgres.user", "request.postgres.command", "request.postgres.schemas", "request.postgres.tables"}
+var canonicalAccessFields = []string{"identity.user_id", "identity.group_ids", "device.id", "device.platform", "product.id", "provider.id", "destination.domain", "destination.ip", "destination.port", "destination.protocol", "process.id", "process.entrypoint_id", "process.name", "process.path", "process.local_port", "browser.extension_id", "browser.extension_identity_id", "browser.extension_surface", "browser.account_id", "browser.account_domain", "browser.account_state", "browser.account_truth_state", "classification.state", "route.posture", "account.posture", "account.access_state", "account.profile_id", "control.path_kind", "source.family", "source.capability", "source.health_state", "local_model.governance_state", "local_model.proof_level", "local_model.name"}
+
+var canonicalResourceFields = []string{"identity.user_id", "identity.group_ids", "identity.service_account_id", "device.id", "process.id", "destination.domain", "resource.id", "resource.protocol", "request.http.method", "request.http.path", "request.http.content_type", "request.postgres.database", "request.postgres.user", "request.postgres.command", "request.postgres.schemas", "request.postgres.tables", "request.postgres.fingerprint", "request.mysql.database", "request.mysql.user", "request.mysql.command", "request.mysql.tables", "request.mysql.fingerprint", "request.redis.user", "request.redis.database", "request.redis.command"}
 
 var canonicalConditionKinds = []string{"predicate", "all", "any", "not", "has_prior_event", "has_event_sequence", "event_count", "prior_distinct_values"}
 
@@ -110,15 +118,6 @@ var canonicalAccessFieldTypes = map[string]string{"account.access_state": "strin
 	"process.path":                  "string",
 	"product.id":                    "string",
 	"provider.id":                   "string",
-	"request.http.method":           "string",
-	"request.http.path":             "string",
-	"request.postgres.command":      "string",
-	"request.postgres.database":     "string",
-	"request.postgres.schemas":      "string_set",
-	"request.postgres.tables":       "string_set",
-	"request.postgres.user":         "string",
-	"resource.id":                   "string",
-	"resource.protocol":             "string",
 	"route.posture":                 "string",
 	"source.capability":             "string_set",
 	"source.family":                 "string",
@@ -131,11 +130,38 @@ var canonicalAccessFieldValueOptions = map[string][]string{"account.access_state
 	"destination.protocol":         {"tcp", "udp"},
 	"local_model.governance_state": {"approved", "unknown", "disallowed"},
 	"local_model.proof_level":      {"request-declared", "running", "available", "unknown"},
-	"request.http.method":          {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-	"request.postgres.command":     {"SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE", "COPY", "CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE", "CALL", "DO", "SET", "SHOW", "EXPLAIN", "VACUUM", "ANALYZE", "BEGIN", "COMMIT", "ROLLBACK", "OTHER"},
-	"resource.protocol":            {"postgres", "http"},
 	"route.posture":                {"managed_route", "delegated_control_route", "unmanaged_direct_route", "approved_asset_control_gap", "unknown_route", "risky_route", "denied_route", "exception_route"},
 	"source.health_state":          {"active", "degraded", "stale", "missing", "disabled", "unhealthy"}}
+var canonicalResourceFieldTypes = map[string]string{"destination.domain": "string",
+	"device.id":                    "string",
+	"identity.group_ids":           "string_set",
+	"identity.service_account_id":  "string",
+	"identity.user_id":             "string",
+	"process.id":                   "string",
+	"request.http.content_type":    "string",
+	"request.http.method":          "string",
+	"request.http.path":            "string",
+	"request.mysql.command":        "string",
+	"request.mysql.database":       "string",
+	"request.mysql.fingerprint":    "string",
+	"request.mysql.tables":         "string_set",
+	"request.mysql.user":           "string",
+	"request.postgres.command":     "string",
+	"request.postgres.database":    "string",
+	"request.postgres.fingerprint": "string",
+	"request.postgres.schemas":     "string_set",
+	"request.postgres.tables":      "string_set",
+	"request.postgres.user":        "string",
+	"request.redis.command":        "string",
+	"request.redis.database":       "number",
+	"request.redis.user":           "string",
+	"resource.id":                  "string",
+	"resource.protocol":            "string"}
+var canonicalResourceFieldValueOptions = map[string][]string{"request.http.method": {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+	"request.mysql.command":    {"SELECT", "INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "ALTER", "DROP", "TRUNCATE", "SHOW", "DESCRIBE", "EXPLAIN", "USE", "SET", "BEGIN", "START", "COMMIT", "ROLLBACK", "CALL"},
+	"request.postgres.command": {"SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE", "COPY", "CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE", "CALL", "DO", "SET", "SHOW", "EXPLAIN", "VACUUM", "ANALYZE", "BEGIN", "COMMIT", "ROLLBACK", "OTHER"},
+	"request.redis.command":    {"GET", "SET", "DEL", "EXISTS", "MGET", "MSET", "HGET", "HSET", "HDEL", "HGETALL", "LPUSH", "RPUSH", "LPOP", "RPOP", "SADD", "SREM", "SMEMBERS", "ZADD", "ZREM", "ZRANGE", "INCR", "DECR", "EXPIRE", "TTL", "SCAN", "KEYS", "SELECT", "PING"},
+	"resource.protocol":        {"postgres", "mysql", "redis", "http"}}
 var canonicalOperatorsByFieldType = map[string][]string{"boolean": {"eq", "neq", "exists"},
 	"content":    {"eq", "neq", "contains", "starts_with", "ends_with", "matches", "exists"},
 	"number":     {"eq", "neq", "in", "not_in", "gt", "gte", "lt", "lte", "exists"},

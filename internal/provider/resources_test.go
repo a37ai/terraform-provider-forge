@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -39,6 +40,17 @@ func TestSetContainsUnknown(t *testing.T) {
 	}
 	if setContainsUnknown(types.SetValueMust(types.StringType, []attr.Value{types.StringValue("res_known")})) {
 		t.Fatal("known Resource reference was treated as unknown")
+	}
+}
+
+func TestResourcePolicyBroadScopeValidationDefersUnknownResource(t *testing.T) {
+	model := regoPolicyModel{
+		Enabled: types.BoolValue(true), AcknowledgeBroadScope: types.BoolValue(false),
+		Users: emptySet(), Groups: emptySet(), ServiceAccounts: emptySet(), Devices: emptySet(), Resources: types.SetUnknown(types.StringType),
+		Action: types.StringValue("block"), Module: types.StringValue("package forge.resource\nmatch := {\"matched\": false}"), Conditions: types.DynamicNull(),
+	}
+	if problems := validateRegoPolicyConfig(context.Background(), "resource", model); len(problems) != 0 {
+		t.Fatalf("unknown Resource reference should defer broad-scope validation: %v", problems)
 	}
 }
 
@@ -83,8 +95,9 @@ func TestTerraformExamplesParse(t *testing.T) {
 
 func TestPolicySchemasExposeOnlyTheirFamilySurface(t *testing.T) {
 	for family, forbidden := range map[string][]string{
-		"content": {"severity", "enforcement_surfaces", "runtime", "notification", "approval_mode", "remediation", "devices", "enforced_by", "remediation_action", "remediation_target"},
-		"access":  {"agents", "evaluate_on", "products", "custom_fields", "message", "auto_approve_on_request", "redaction_strategy", "redaction_pattern", "filter_path", "remediation_action", "remediation_target"},
+		"content":  {"severity", "enforcement_surfaces", "runtime", "notification", "approval_mode", "remediation", "devices", "enforced_by", "remediation_action", "remediation_target"},
+		"access":   {"enforcement", "resources", "agents", "evaluate_on", "products", "custom_fields", "message", "auto_approve_on_request", "redaction_strategy", "redaction_pattern", "filter_path", "remediation_action", "remediation_target"},
+		"resource": {"enforcement_surfaces", "runtime", "notification", "remediation", "agents", "products", "evaluate_on", "custom_fields", "auto_approve_on_request", "enforced_by"},
 	} {
 		policyResource := &regoPolicyResource{family: family}
 		var response resource.SchemaResponse
@@ -95,12 +108,116 @@ func TestPolicySchemasExposeOnlyTheirFamilySurface(t *testing.T) {
 			}
 		}
 		if family == "access" {
-			for _, name := range []string{"enforcement", "service_accounts"} {
+			for _, name := range []string{"enforcement_surfaces", "service_accounts"} {
 				if _, exists := response.Schema.Attributes[name]; !exists {
 					t.Errorf("access schema is missing %s", name)
 				}
 			}
 		}
+		if family == "resource" {
+			for _, name := range []string{"enforcement", "resources", "service_accounts", "message", "data_target", "approval_mode", "redaction_strategy", "filter_path"} {
+				if _, exists := response.Schema.Attributes[name]; !exists {
+					t.Errorf("resource schema is missing %s", name)
+				}
+			}
+		}
+	}
+}
+
+func TestResourcePolicyAllActionsRoundTripForNativeAndRego(t *testing.T) {
+	for _, authoredWithRego := range []bool{false, true} {
+		for _, action := range canonicalResourceActions {
+			t.Run(fmt.Sprintf("rego=%t/%s", authoredWithRego, action), func(t *testing.T) {
+				m := regoPolicyModel{
+					ID: types.StringValue("resource-" + action), Name: types.StringValue("Resource " + action), Enabled: types.BoolValue(true), Enforcement: types.StringValue("enforce"), Severity: types.StringValue("high"), AcknowledgeBroadScope: types.BoolValue(false),
+					Users: stringSet("alice@example.com"), Groups: emptySet(), UserDirectoryIDs: stringMap(nil), GroupDirectoryIDs: stringMap(nil), ServiceAccounts: emptySet(), Devices: emptySet(), Resources: stringSet("resource-1"), Action: types.StringValue(action), Message: types.StringValue("Policy message"),
+					Module: types.StringNull(), Conditions: testDynamic(t, map[string]any{"field": "resource.id", "op": "eq", "value": "resource-1"}), DataTarget: types.StringNull(), ApprovalMode: types.StringNull(),
+					RedactionStrategy: types.StringNull(), RedactionReplacement: types.StringNull(), RedactionPaths: types.SetNull(types.StringType), RedactionKeepStart: types.Int64Null(), RedactionKeepEnd: types.Int64Null(), RedactionMask: types.StringNull(), RedactionSaltRef: types.StringNull(), RedactionFakeSubtype: types.StringNull(), RedactionApplyTo: types.StringNull(), RedactionPattern: types.StringNull(),
+					FilterCollectionPath: types.StringNull(), FilterPath: types.StringNull(), FilterOperator: types.StringNull(), FilterValue: types.DynamicNull(), FilterOnUnavailable: types.StringNull(),
+				}
+				if authoredWithRego {
+					m.Module, m.Conditions = types.StringValue("package forge.resource\nmatch := {\"matched\": true}"), types.DynamicNull()
+				}
+				switch action {
+				case "redact":
+					m.DataTarget, m.RedactionStrategy, m.RedactionReplacement, m.RedactionPaths = types.StringValue("postgres_result"), types.StringValue("constant"), types.StringValue("[REDACTED]"), stringSet("$.email")
+				case "filter":
+					m.DataTarget, m.FilterCollectionPath, m.FilterPath, m.FilterOperator, m.FilterValue, m.FilterOnUnavailable = types.StringValue("postgres_result"), types.StringValue("$.rows"), types.StringValue("$.status"), types.StringValue("eq"), testDynamic(t, "disabled"), types.StringValue("block")
+				case "require_approval":
+					m.ApprovalMode = types.StringValue("self_serve")
+				}
+				if problems := validateRegoPolicyConfig(context.Background(), "resource", m); len(problems) != 0 {
+					t.Fatalf("valid Resource action: %v", problems)
+				}
+				var diagnostics diag.Diagnostics
+				r := &regoPolicyResource{family: "resource"}
+				definition, _ := r.buildMutation(context.Background(), m, false, &diagnostics)
+				if diagnostics.HasError() {
+					t.Fatalf("build: %v", diagnostics)
+				}
+				item := policyAPIItem{CurrentRevision: 2, DefinitionSHA: "sha", Definition: definition}
+				var got regoPolicyModel
+				r.flatten(context.Background(), item, &got, &diagnostics)
+				if diagnostics.HasError() || got.Action.ValueString() != action || got.DataTarget.ValueString() != m.DataTarget.ValueString() {
+					t.Fatalf("round trip: got=%+v diagnostics=%v", got, diagnostics)
+				}
+				if action == "require_approval" && got.ApprovalMode.ValueString() != "self_serve" {
+					t.Fatalf("approval mode was lost: %+v", got)
+				}
+				if action == "redact" && got.RedactionReplacement.ValueString() != "[REDACTED]" {
+					t.Fatalf("redaction was lost: %+v", got)
+				}
+				if action == "filter" && got.FilterCollectionPath.ValueString() != "$.rows" {
+					t.Fatalf("filter was lost: %+v", got)
+				}
+			})
+		}
+	}
+}
+
+func TestResourcePolicyDataTargetRequiresSelectedResourceForNativeAndRego(t *testing.T) {
+	for _, authoredWithRego := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rego=%t", authoredWithRego), func(t *testing.T) {
+			m := regoPolicyModel{
+				Enabled: types.BoolValue(true), AcknowledgeBroadScope: types.BoolValue(true), Users: emptySet(), Groups: emptySet(), ServiceAccounts: emptySet(), Devices: emptySet(), Resources: emptySet(),
+				Action: types.StringValue("redact"), DataTarget: types.StringValue("http_response_body"), RedactionStrategy: types.StringValue("nullify"), RedactionPaths: stringSet("$.secret"),
+				Module: types.StringNull(), Conditions: testDynamic(t, map[string]any{"field": "identity.user_id", "op": "exists"}),
+			}
+			if authoredWithRego {
+				m.Module, m.Conditions = types.StringValue("package forge.resource\nmatch := {\"matched\": true}"), types.DynamicNull()
+			}
+			problems := validateRegoPolicyConfig(context.Background(), "resource", m)
+			if !slices.Contains(problems, "data_target requires at least one selected Resource") {
+				t.Fatalf("missing selected-Resource error: %v", problems)
+			}
+			m.Resources = stringSet("resource-1")
+			if problems := validateRegoPolicyConfig(context.Background(), "resource", m); len(problems) != 0 {
+				t.Fatalf("selected Resource should be valid: %v", problems)
+			}
+		})
+	}
+}
+
+func TestResourceBroadScopeAcknowledgementMatchesAPI(t *testing.T) {
+	broad := func(action string) regoPolicyModel {
+		return regoPolicyModel{
+			Enabled: types.BoolValue(true), AcknowledgeBroadScope: types.BoolValue(false),
+			Users: emptySet(), Groups: emptySet(), ServiceAccounts: emptySet(), Devices: emptySet(), Resources: emptySet(),
+			Action: types.StringValue(action), Module: types.StringValue("package forge.resource\nmatch := {\"matched\": false}"), Conditions: types.DynamicNull(),
+			EvaluateOn: types.ListNull(types.StringType), DataTarget: types.StringNull(), ApprovalMode: types.StringNull(),
+			RedactionStrategy: types.StringNull(), RedactionReplacement: types.StringNull(), RedactionPaths: types.SetNull(types.StringType),
+			FilterCollectionPath: types.StringNull(), FilterPath: types.StringNull(), FilterOperator: types.StringNull(), FilterValue: types.DynamicNull(), FilterOnUnavailable: types.StringNull(),
+		}
+	}
+	for _, action := range []string{"block", "redact", "filter", "require_approval"} {
+		model := broad(action)
+		if problems := validateRegoPolicyConfig(context.Background(), "resource", model); !slices.Contains(problems, "acknowledge_broad_scope must be true before enabling a broad disruptive Resource policy") {
+			t.Fatalf("%s missing broad-scope safeguard: %v", action, problems)
+		}
+	}
+	model := broad("flag_for_review")
+	if problems := validateRegoPolicyConfig(context.Background(), "resource", model); len(problems) != 0 {
+		t.Fatalf("non-disruptive review policy required acknowledgement: %v", problems)
 	}
 }
 
@@ -364,21 +481,21 @@ func TestEverySubjectResourcePreservesDirectoryQualifiers(t *testing.T) {
 	assertQualified(t, mcpRef, "appliesTo")
 }
 
-func TestPolicyResourcesPreserveAllCanonicalMetadataAndExceptions(t *testing.T) {
+func TestResourcePoliciesPreserveAllSharedMetadataAndExceptions(t *testing.T) {
 	model := regoPolicyModel{
-		ID: types.StringValue("complete-access"), Name: types.StringValue("Complete access"),
+		ID: types.StringValue("complete-resource"), Name: types.StringValue("Complete Resource policy"),
 		Description: types.StringValue("Description"), Rationale: types.StringValue("Rationale"), Enabled: types.BoolValue(true),
 		UseCases: stringSet("Organizational Access"), ComplianceFrameworks: stringSet("NIST"), Labels: stringSet("owner:security"),
 		Users: stringSet("alice@example.com"), Groups: emptySet(), UserDirectoryIDs: stringMap(nil), GroupDirectoryIDs: stringMap(nil),
 		Devices: stringSet("Finance MacBook"), ServiceAccounts: emptySet(), Agents: emptySet(), Products: emptySet(), Resources: stringSet("database-primary"),
-		EnforcementSurfaces: stringSet("resource_proxy"),
-		Action:              types.StringValue("block"), Conditions: testDynamic(t, map[string]any{"field": "device.platform", "op": "eq", "value": "darwin"}),
+		Enforcement: types.StringValue("monitor"), Severity: types.StringValue("high"), AcknowledgeBroadScope: types.BoolValue(false),
+		Action: types.StringValue("block"), Message: types.StringValue("Production deletes are blocked."), Conditions: testDynamic(t, map[string]any{"field": "resource.id", "op": "eq", "value": "database-primary"}),
 		Except:     testDynamic(t, map[string]any{"field": "identity.user_id", "op": "eq", "value": "break-glass@example.com"}),
 		Exceptions: testDynamic(t, []any{map[string]any{"id": "exception:finance", "reason": "Approved finance workflow", "expiresAt": "2026-09-01T00:00:00Z", "conditions": map[string]any{"field": "identity.group_ids", "op": "contains", "value": "finance"}}}),
-		EnforcedBy: stringSet("CrowdStrike Falcon"), EvaluateOn: types.ListNull(types.StringType), Module: types.StringNull(),
-		Message: types.StringNull(), RemediationAction: types.StringNull(), RemediationTarget: types.StringNull(),
+		EvaluateOn: types.ListNull(types.StringType), Module: types.StringNull(),
+		RemediationAction: types.StringNull(), RemediationTarget: types.StringNull(),
 	}
-	resource := &regoPolicyResource{family: "access", path: "access-policies"}
+	resource := &regoPolicyResource{family: "resource", path: "resource-policies"}
 	var diagnostics diag.Diagnostics
 	definition, sourceRef := resource.buildMutation(context.Background(), model, false, &diagnostics)
 	if diagnostics.HasError() {
@@ -408,16 +525,16 @@ func TestPolicyResourcesPreserveAllCanonicalMetadataAndExceptions(t *testing.T) 
 		exceptionConditions["value"] != "finance" {
 		t.Fatalf("exceptions=%+v", definition["exceptions"])
 	}
-	if got := definition["enforcedBy"].([]string); len(got) != 1 || got[0] != "CrowdStrike Falcon" {
-		t.Fatalf("enforcedBy=%v", got)
+	if definition["enforcement"] != "monitor" || definition["message"] != "Production deletes are blocked." {
+		t.Fatalf("Resource policy fields=%+v", definition)
 	}
 	scope := object(definition["appliesTo"])
 	if got := scope["resources"].([]string); len(got) != 1 || got[0] != "database-primary" {
 		t.Fatalf("resources=%v", got)
 	}
-	selectors := object(sourceRef["selectors"])
-	if got := selectors["enforcedBy"].([]string); len(got) != 1 || got[0] != "CrowdStrike Falcon" {
-		t.Fatalf("source selectors=%+v", selectors)
+	selectors := object(object(sourceRef["selectors"])["appliesTo"])
+	if got := selectors["resources"].([]string); len(got) != 1 || got[0] != "database-primary" {
+		t.Fatalf("source selectors=%+v", sourceRef["selectors"])
 	}
 	var flattened regoPolicyModel
 	resource.flatten(context.Background(), policyAPIItem{Definition: definition}, &flattened, &diagnostics)
@@ -455,10 +572,10 @@ func TestPolicyResourcesPreserveAllCanonicalMetadataAndExceptions(t *testing.T) 
 	}
 }
 
-func TestAccessRegoResourcePreservesResourceCallersAndMapsNotification(t *testing.T) {
+func TestResourcePolicyRegoPreservesResourceCallersAndMonitorMode(t *testing.T) {
 	var body map[string]any
 	var diagnostics diag.Diagnostics
-	module := "package forge.access\nmatch := {\"matched\": true}"
+	module := "package forge.resource\nmatch := {\"matched\": true}"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(module)))
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/headless/v1/organizations/org.test/policy-code/rego/validate" {
@@ -468,18 +585,17 @@ func TestAccessRegoResourcePreservesResourceCallersAndMapsNotification(t *testin
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"item": map[string]any{"id": "access-a", "currentRevision": 1, "definitionSha256": "server", "definition": body["definition"], "sourceRef": body["sourceRef"]}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"item": map[string]any{"id": "resource-a", "currentRevision": 1, "definitionSha256": "server", "definition": body["definition"], "sourceRef": body["sourceRef"]}})
 	})
 	m := regoPolicyModel{
-		ID: types.StringValue("access-a"), Name: types.StringValue("Access A"), Enabled: types.BoolValue(true),
+		ID: types.StringValue("resource-a"), Name: types.StringValue("Resource A"), Enabled: types.BoolValue(true),
 		Users: stringSet("alice@example.com"), Groups: emptySet(), Devices: stringSet("macbook-a"),
-		ServiceAccounts: stringSet("service_account_1"), Agents: types.SetNull(types.StringType), Products: types.SetNull(types.StringType),
+		ServiceAccounts: stringSet("service_account_1"), Resources: stringSet("resource-1"), Agents: types.SetNull(types.StringType), Products: types.SetNull(types.StringType),
 		EvaluateOn: types.ListNull(types.StringType), Action: types.StringValue("block"),
-		Enforcement: types.StringValue("monitor"), Severity: types.StringValue("high"), AcknowledgeBroadScope: types.BoolValue(false), EnforcementSurfaces: stringSet("inline_hook"),
-		Notification: dynamicFromGo(map[string]any{"message": "Use the approved product", "notifyUser": true}, &diagnostics),
-		Module:       types.StringValue(module),
+		Enforcement: types.StringValue("monitor"), Severity: types.StringValue("high"), AcknowledgeBroadScope: types.BoolValue(false), Message: types.StringValue("Use the approved Resource operation"),
+		Module: types.StringValue(module),
 	}
-	resource := &regoPolicyResource{client: client, family: "access", path: "access-policies"}
+	resource := &regoPolicyResource{client: client, family: "resource", path: "resource-policies"}
 	resource.apply(context.Background(), m, 0, &diagnostics, func(regoPolicyModel) {})
 	if diagnostics.HasError() {
 		t.Fatalf("diagnostics=%v", diagnostics)
@@ -487,16 +603,16 @@ func TestAccessRegoResourcePreservesResourceCallersAndMapsNotification(t *testin
 	definition := body["definition"].(map[string]any)
 	scope := definition["appliesTo"].(map[string]any)
 	if got := scope["serviceAccounts"].([]any); len(got) != 1 || got[0] != "service_account_1" {
-		t.Fatalf("access scope lost service accounts: %+v", scope)
+		t.Fatalf("Resource scope lost service accounts: %+v", scope)
 	}
 	if definition["enforcement"] != "monitor" {
-		t.Fatalf("access enforcement mode was lost: %+v", definition)
+		t.Fatalf("Resource enforcement mode was lost: %+v", definition)
 	}
-	if object(definition["notification"])["message"] != "Use the approved product" {
-		t.Fatalf("access notification was lost: %+v", definition)
+	if definition["message"] != "Use the approved Resource operation" {
+		t.Fatalf("Resource message was lost: %+v", definition)
 	}
-	if got, ok := definition["enforcementSurfaces"].([]any); !ok || len(got) != 1 || got[0] != "inline_hook" {
-		t.Fatalf("access enforcement surfaces were lost: %+v", definition)
+	if got, ok := scope["resources"].([]any); !ok || len(got) != 1 || got[0] != "resource-1" {
+		t.Fatalf("Resource scope was lost: %+v", definition)
 	}
 }
 
@@ -745,13 +861,42 @@ func TestRegoPolicyConfigValidationCoversEnumsAndActionSpecificShapes(t *testing
 	monitor := null("block")
 	monitor.EvaluateOn = types.ListNull(types.StringType)
 	monitor.Enforcement = types.StringValue("monitor")
-	monitor.EnforcementSurfaces = stringSet("endpoint_route")
-	if got := validateRegoPolicyConfig(context.Background(), "access", monitor); len(got) == 0 {
-		t.Fatal("monitor mode outside Resource traffic must fail")
-	}
-	monitor.EnforcementSurfaces = stringSet("resource_proxy")
-	if got := validateRegoPolicyConfig(context.Background(), "access", monitor); len(got) != 0 {
+	monitor.Module = types.StringValue("package forge.resource\nmatch := {\"matched\": false}")
+	if got := validateRegoPolicyConfig(context.Background(), "resource", monitor); len(got) != 0 {
 		t.Fatalf("Resource monitor mode must be valid: %v", got)
+	}
+	resourceRedact := null("redact")
+	resourceRedact.EvaluateOn = types.ListNull(types.StringType)
+	resourceRedact.Module = types.StringValue("package forge.resource\nmatch := {\"matched\": false}")
+	resourceRedact.Resources = stringSet("resource-1")
+	resourceRedact.DataTarget = types.StringValue("postgres_result")
+	resourceRedact.RedactionReplacement = types.StringValue("[REDACTED]")
+	if got := validateRegoPolicyConfig(context.Background(), "resource", resourceRedact); len(got) == 0 {
+		t.Fatal("PostgreSQL redaction without columns must fail")
+	}
+	resourceRedact.RedactionPaths = stringSet("$.email")
+	if got := validateRegoPolicyConfig(context.Background(), "resource", resourceRedact); len(got) != 0 {
+		t.Fatalf("valid Resource redaction: %v", got)
+	}
+	resourceFilter := null("filter")
+	resourceFilter.EvaluateOn = types.ListNull(types.StringType)
+	resourceFilter.Module = types.StringValue("package forge.resource\nmatch := {\"matched\": false}")
+	resourceFilter.Resources = stringSet("resource-1")
+	resourceFilter.DataTarget = types.StringValue("http_request_body")
+	resourceFilter.FilterCollectionPath, resourceFilter.FilterPath, resourceFilter.FilterOperator, resourceFilter.FilterValue, resourceFilter.FilterOnUnavailable = types.StringValue("$.rows"), types.StringValue("$.status"), types.StringValue("eq"), testDynamic(t, "disabled"), types.StringValue("block")
+	if got := validateRegoPolicyConfig(context.Background(), "resource", resourceFilter); len(got) == 0 {
+		t.Fatal("HTTP request filtering must fail")
+	}
+	resourceFilter.DataTarget = types.StringValue("http_response_body")
+	if got := validateRegoPolicyConfig(context.Background(), "resource", resourceFilter); len(got) != 0 {
+		t.Fatalf("valid Resource filter: %v", got)
+	}
+	resourceApproval := null("require_approval")
+	resourceApproval.EvaluateOn = types.ListNull(types.StringType)
+	resourceApproval.Module = types.StringValue("package forge.resource\nmatch := {\"matched\": false}")
+	resourceApproval.ApprovalMode = types.StringValue("admin_approval")
+	if got := validateRegoPolicyConfig(context.Background(), "resource", resourceApproval); len(got) != 0 {
+		t.Fatalf("valid Resource approval: %v", got)
 	}
 }
 

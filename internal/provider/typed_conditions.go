@@ -135,8 +135,8 @@ func validateTypedCondition(node map[string]any, family string, customFieldTypes
 	}
 	for _, key := range []string{"not", "hasPriorEvent"} {
 		if value, ok := node[key]; ok {
-			if key == "hasPriorEvent" && family != "content" {
-				return fmt.Errorf("%s.%s is only available to content policies", path, key)
+			if key == "hasPriorEvent" && !supportsHistoryConditions(family) {
+				return fmt.Errorf("%s.%s is only available to Content and Resource policies", path, key)
 			}
 			child, ok := value.(map[string]any)
 			if !ok {
@@ -146,8 +146,8 @@ func validateTypedCondition(node map[string]any, family string, customFieldTypes
 		}
 	}
 	if value, ok := node["hasEventSequence"]; ok {
-		if family != "content" {
-			return fmt.Errorf("%s.hasEventSequence is only available to content policies", path)
+		if !supportsHistoryConditions(family) {
+			return fmt.Errorf("%s.hasEventSequence is only available to Content and Resource policies", path)
 		}
 		config, ok := value.(map[string]any)
 		if !ok || !exactKeys(config, "within", "ordered", "events") {
@@ -175,8 +175,8 @@ func validateTypedCondition(node map[string]any, family string, customFieldTypes
 		return nil
 	}
 	if value, ok := node["eventCount"]; ok {
-		if family != "content" {
-			return fmt.Errorf("%s.eventCount is only available to content policies", path)
+		if !supportsHistoryConditions(family) {
+			return fmt.Errorf("%s.eventCount is only available to Content and Resource policies", path)
 		}
 		config, ok := value.(map[string]any)
 		if !ok || !exactKeys(config, "within", "where", "op", "value") {
@@ -195,8 +195,8 @@ func validateTypedCondition(node map[string]any, family string, customFieldTypes
 		return validateTypedCondition(where, family, customFieldTypes, path+".eventCount.where", depth+1, nodes)
 	}
 	if value, ok := node["priorDistinctValues"]; ok {
-		if family != "content" {
-			return fmt.Errorf("%s.priorDistinctValues is only available to content policies", path)
+		if !supportsHistoryConditions(family) {
+			return fmt.Errorf("%s.priorDistinctValues is only available to Content and Resource policies", path)
 		}
 		config, ok := value.(map[string]any)
 		if !ok || !(exactKeys(config, "within", "field", "op", "value") || exactKeys(config, "within", "field", "where", "op", "value")) {
@@ -206,8 +206,9 @@ func validateTypedCondition(node map[string]any, family string, customFieldTypes
 			return err
 		}
 		field := stringFrom(config["field"])
-		if !stringSetOf(canonicalContentFields)[field] && customFieldTypes[field] == "" {
-			return fmt.Errorf("%s.priorDistinctValues.field is not a content field", path)
+		fields, _, _ := policyConditionCatalog(family)
+		if !stringSetOf(fields)[field] && !(family == "content" && customFieldTypes[field] != "") {
+			return fmt.Errorf("%s.priorDistinctValues.field %q is not available to %s policies", path, field, family)
 		}
 		if err := validateCountComparison(config, path+".priorDistinctValues"); err != nil {
 			return err
@@ -224,6 +225,21 @@ func validateTypedCondition(node map[string]any, family string, customFieldTypes
 	return fmt.Errorf("%s uses an unknown condition operator", path)
 }
 
+func supportsHistoryConditions(family string) bool {
+	return family == "content" || family == "resource"
+}
+
+func policyConditionCatalog(family string) ([]string, map[string]string, map[string][]string) {
+	switch family {
+	case "access":
+		return canonicalAccessFields, canonicalAccessFieldTypes, canonicalAccessFieldValueOptions
+	case "resource":
+		return canonicalResourceFields, canonicalResourceFieldTypes, canonicalResourceFieldValueOptions
+	default:
+		return canonicalContentFields, canonicalContentFieldTypes, nil
+	}
+}
+
 func validateTypedPredicate(node map[string]any, family string, customFieldTypes map[string]string, path string) error {
 	if !(exactKeys(node, "field", "op") || exactKeys(node, "field", "op", "value")) {
 		return fmt.Errorf("%s predicate requires field, op, and value except for exists", path)
@@ -233,12 +249,7 @@ func validateTypedPredicate(node map[string]any, family string, customFieldTypes
 	if !fieldOK || !opOK {
 		return fmt.Errorf("%s.field and %s.op must be strings", path, path)
 	}
-	fields := canonicalContentFields
-	fieldTypes := canonicalContentFieldTypes
-	if family == "access" {
-		fields = canonicalAccessFields
-		fieldTypes = canonicalAccessFieldTypes
-	}
+	fields, fieldTypes, fieldValueOptions := policyConditionCatalog(family)
 	if !stringSetOf(fields)[field] && !(family == "content" && customFieldTypes[field] != "") {
 		return fmt.Errorf("%s.field %q is not available to %s policies", path, field, family)
 	}
@@ -263,8 +274,8 @@ func validateTypedPredicate(node map[string]any, family string, customFieldTypes
 		if err := validateTypedConditionValue(node["value"], valueType, op, path+".value"); err != nil {
 			return err
 		}
-		if family == "access" {
-			if err := validateTypedAccessFieldValueOption(field, op, node["value"], path+".value"); err != nil {
+		if fieldValueOptions != nil {
+			if err := validateTypedFieldValueOption(fieldValueOptions, field, op, node["value"], path+".value"); err != nil {
 				return err
 			}
 		}
@@ -280,8 +291,8 @@ func validateTypedPredicate(node map[string]any, family string, customFieldTypes
 	return nil
 }
 
-func validateTypedAccessFieldValueOption(field, op string, value any, path string) error {
-	options := canonicalAccessFieldValueOptions[field]
+func validateTypedFieldValueOption(fieldOptions map[string][]string, field, op string, value any, path string) error {
+	options := fieldOptions[field]
 	if len(options) == 0 || op == "exists" || op == "matches" || op == "contains" || op == "starts_with" || op == "ends_with" {
 		return nil
 	}

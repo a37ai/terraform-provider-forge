@@ -17,7 +17,7 @@ A Forge access policy using forge.rego.v1 match logic.
 ### Required
 
 - `action` (String)
-- `enforcement_surfaces` (Set of String) Exact execution surfaces: inline_hook, endpoint_route, provider, or resource_proxy.
+- `enforcement_surfaces` (Set of String) Exact execution surfaces for Access policy enforcement.
 - `name` (String)
 
 ### Optional
@@ -29,7 +29,6 @@ A Forge access policy using forge.rego.v1 match logic.
 - `description` (String)
 - `devices` (Set of String)
 - `enabled` (Boolean)
-- `enforcement` (String) Enforce matching outcomes, or monitor what would have happened for Resource traffic. `monitor` currently requires `enforcement_surfaces = ["resource_proxy"]`. (default: `enforce`)
 - `enforced_by` (Set of String) Exact integration names. Forge resolves them authoritatively and errors on missing or ambiguous matches.
 - `except` (Dynamic) Legacy compatibility field for one anonymous exception. Prefer exceptions for named, reasoned, and optionally expiring policy exceptions.
 - `exceptions` (Dynamic) Named scoped exceptions with an ID, reason, optional expiration, and conditions.
@@ -40,7 +39,6 @@ A Forge access policy using forge.rego.v1 match logic.
 - `notification` (Dynamic) Notification shown when this policy applies.
 - `rationale` (String)
 - `remediation` (Dynamic) Actions Forge may take when this policy applies.
-- `resources` (Set of String) Stable Forge Resource IDs governed by this Access policy.
 - `runtime` (Dynamic) Access runtime settings.
 - `service_accounts` (Set of String) Service account IDs governed by this Access policy.
 - `severity` (String)

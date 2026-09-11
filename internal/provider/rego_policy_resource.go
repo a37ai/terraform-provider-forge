@@ -63,6 +63,7 @@ type regoPolicyModel struct {
 	Products              types.Set     `tfsdk:"products"`
 	EvaluateOn            types.List    `tfsdk:"evaluate_on"`
 	Action                types.String  `tfsdk:"action"`
+	DataTarget            types.String  `tfsdk:"data_target"`
 	Message               types.String  `tfsdk:"message"`
 	AutoApprove           types.Bool    `tfsdk:"auto_approve_on_request"`
 	RedactionReplacement  types.String  `tfsdk:"redaction_replacement"`
@@ -102,6 +103,10 @@ func newAccessPolicyResource() resource.Resource {
 	return &regoPolicyResource{family: "access", path: "access-policies"}
 }
 
+func newResourcePolicyResource() resource.Resource {
+	return &regoPolicyResource{family: "resource", path: "resource-policies"}
+}
+
 func (r *regoPolicyResource) Metadata(_ context.Context, q resource.MetadataRequest, p *resource.MetadataResponse) {
 	p.TypeName = q.ProviderTypeName + "_" + r.family + "_policy"
 }
@@ -123,11 +128,12 @@ func (r *regoPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		"group_directory_ids":     schema.MapAttribute{Optional: true, Computed: true, Default: mapdefault.StaticValue(types.MapValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Map{mapvalidator.SizeAtMost(256)}, Description: "Optional map from a configured group name to a Forge directory ID, used only to disambiguate duplicate exact matches."},
 		"service_accounts":        schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}},
 		"module":                  schema.StringAttribute{Optional: true, Validators: []validator.String{stringvalidator.LengthBetween(1, 256<<10)}, Description: "A forge.rego.v1 module. Set exactly one of module or conditions."},
-		"conditions":              schema.DynamicAttribute{Optional: true, Description: "A native HCL condition object using field/op/value leaves; all, any, and not; and Content-only stateful operators. Set exactly one of conditions or module."},
+		"conditions":              schema.DynamicAttribute{Optional: true, Description: "A native HCL condition object using field/op/value leaves plus all, any, and not. Set exactly one of conditions or module."},
 		"custom_fields":           schema.DynamicAttribute{Optional: true, Description: "Immutable typed descriptors for registered nested tool.input fields used by native content-policy conditions."},
 		"except":                  schema.DynamicAttribute{Optional: true, Description: "Legacy compatibility field for one anonymous exception. Prefer exceptions for named, reasoned, and optionally expiring policy exceptions."},
 		"exceptions":              schema.DynamicAttribute{Optional: true, Description: "Named scoped exceptions with an ID, reason, optional expiration, and conditions."},
 		"action":                  schema.StringAttribute{Required: true},
+		"data_target":             schema.StringAttribute{Optional: true},
 		"message":                 schema.StringAttribute{Optional: true, Validators: nonempty},
 		"auto_approve_on_request": schema.BoolAttribute{Optional: true},
 		"redaction_replacement":   schema.StringAttribute{Optional: true},
@@ -148,8 +154,9 @@ func (r *regoPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		"validation_token":   schema.StringAttribute{Computed: true, Sensitive: true, Description: "Short-lived server plan binding. Managed internally by the provider and never authored."},
 		"module_sha256":      schema.StringAttribute{Computed: true},
 	}
-	if r.family == "content" {
-		for _, key := range []string{"enforcement", "severity", "enforcement_surfaces", "runtime", "notification", "approval_mode", "remediation", "devices", "enforced_by", "remediation_action", "remediation_target"} {
+	switch r.family {
+	case "content":
+		for _, key := range []string{"enforcement", "severity", "enforcement_surfaces", "runtime", "notification", "approval_mode", "remediation", "devices", "data_target", "enforced_by", "remediation_action", "remediation_target"} {
 			delete(attrs, key)
 		}
 		attrs["acknowledge_broad_scope"] = schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Required before enabling a broad disruptive Content policy. Empty scope means all applicable subjects, agents, and products."}
@@ -158,25 +165,40 @@ func (r *regoPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		attrs["products"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}}
 		attrs["except"] = schema.DynamicAttribute{Optional: true, Description: "Legacy compatibility field for one anonymous exception. Prefer exceptions for named, reasoned, and optionally expiring policy exceptions. Content exceptions are not lowered to endpoint authorization, so configuring one causes the endpoint Content decision to be omitted."}
 		attrs["exceptions"] = schema.DynamicAttribute{Optional: true, Description: "Named scoped exceptions with id, reason, optional RFC3339 expiresAt, and a canonical conditions tree. Content exceptions are not lowered to endpoint authorization, so configuring any causes the endpoint Content decision to be omitted."}
+		attrs["conditions"] = schema.DynamicAttribute{Optional: true, Description: "A native HCL Content condition using field/op/value leaves; all, any, and not; or prior-event, sequence, count, and distinct-value conditions. Set exactly one of conditions or module."}
 		attrs["action"] = schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf(canonicalContentActions...)}}
-	} else {
-		for _, key := range []string{"evaluate_on", "products", "custom_fields", "message", "auto_approve_on_request", "redaction_replacement", "redaction_strategy", "redaction_paths", "redaction_keep_start", "redaction_keep_end", "redaction_mask_character", "redaction_salt_ref", "redaction_fake_subtype", "redaction_apply_to", "redaction_pattern", "filter_collection_path", "filter_path", "filter_operator", "filter_value", "filter_on_unavailable", "remediation_action", "remediation_target"} {
+	case "access":
+		for _, key := range []string{"enforcement", "evaluate_on", "products", "resources", "agents", "custom_fields", "message", "data_target", "auto_approve_on_request", "redaction_replacement", "redaction_strategy", "redaction_paths", "redaction_keep_start", "redaction_keep_end", "redaction_mask_character", "redaction_salt_ref", "redaction_fake_subtype", "redaction_apply_to", "redaction_pattern", "filter_collection_path", "filter_path", "filter_operator", "filter_value", "filter_on_unavailable", "remediation_action", "remediation_target"} {
 			delete(attrs, key)
 		}
-		attrs["enforcement"] = schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("enforce"), Validators: []validator.String{stringvalidator.OneOf("enforce", "monitor")}, Description: "Enforce matching outcomes, or monitor what would have happened for Resource traffic."}
-		attrs["service_accounts"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}, Description: "Service account IDs governed by this Access policy."}
 		attrs["severity"] = schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("medium"), Validators: []validator.String{stringvalidator.OneOf(canonicalAccessSeverities...)}}
 		attrs["acknowledge_broad_scope"] = schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Required before enabling a broad disruptive Access policy."}
-		attrs["enforcement_surfaces"] = schema.SetAttribute{Required: true, ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeBetween(1, 4), setvalidator.ValueStringsAre(stringvalidator.OneOf(canonicalAccessEnforcementSurfaces...))}, Description: "Exact execution surfaces: inline_hook, endpoint_route, provider, or resource_proxy."}
+		attrs["enforcement_surfaces"] = schema.SetAttribute{Required: true, ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeBetween(1, 3), setvalidator.ValueStringsAre(stringvalidator.OneOf(canonicalAccessEnforcementSurfaces...))}, Description: "Exact execution surfaces for Access policy enforcement."}
 		attrs["runtime"] = schema.DynamicAttribute{Optional: true, Description: "Access runtime settings."}
 		attrs["notification"] = schema.DynamicAttribute{Optional: true, Description: "Notification shown when this policy applies."}
 		attrs["approval_mode"] = schema.StringAttribute{Optional: true, Validators: []validator.String{stringvalidator.OneOf(canonicalAccessApprovalModes...)}}
 		attrs["remediation"] = schema.DynamicAttribute{Optional: true, Description: "Actions Forge may take when this policy applies."}
 		attrs["exceptions"] = schema.DynamicAttribute{Optional: true, Description: "Named scoped exceptions with an ID, reason, optional expiration, and conditions."}
 		attrs["devices"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}}
-		attrs["resources"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}, Description: "Stable Forge Resource IDs governed by this Access policy."}
 		attrs["enforced_by"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}, Description: "Exact integration names. Forge resolves them authoritatively and errors on missing or ambiguous matches."}
 		attrs["action"] = schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf(canonicalAccessActions...)}}
+	case "resource":
+		for _, key := range []string{"enforcement_surfaces", "runtime", "notification", "remediation", "agents", "products", "evaluate_on", "custom_fields", "auto_approve_on_request", "remediation_action", "remediation_target", "enforced_by"} {
+			delete(attrs, key)
+		}
+		attrs["enforcement"] = schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("enforce"), Validators: []validator.String{stringvalidator.OneOf(canonicalResourceEnforcement...)}, Description: "Enforce matching outcomes, or monitor what would have happened while allowing Resource traffic."}
+		attrs["severity"] = schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("medium"), Validators: []validator.String{stringvalidator.OneOf(canonicalAccessSeverities...)}}
+		attrs["acknowledge_broad_scope"] = schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), Description: "Required before enabling a broad disruptive Resource policy."}
+		attrs["service_accounts"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}, Description: "Service account IDs governed by this Resource policy."}
+		attrs["devices"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}}
+		attrs["resources"] = schema.SetAttribute{Optional: true, Computed: true, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, nil)), ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}, Description: "Stable Forge Resource IDs governed by this Resource policy."}
+		attrs["conditions"] = schema.DynamicAttribute{Optional: true, Description: "A native HCL Resource condition using Resource fields, including process.id and destination.domain; field/op/value leaves; all, any, and not; or prior-event, sequence, count, and distinct-value conditions. Set exactly one of conditions or module."}
+		attrs["action"] = schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf(canonicalResourceActions...)}}
+		attrs["data_target"] = schema.StringAttribute{Optional: true, Validators: []validator.String{stringvalidator.OneOf(canonicalResourceDataTargets...)}, Description: "Data transformed by redact or filter: an HTTP request body, HTTP response body, PostgreSQL result, or MySQL result."}
+		attrs["approval_mode"] = schema.StringAttribute{Optional: true, Validators: []validator.String{stringvalidator.OneOf(canonicalAccessApprovalModes...)}}
+	default:
+		p.Diagnostics.AddError("Unsupported policy family", r.family)
+		return
 	}
 	p.Schema = schema.Schema{Description: "A Forge " + r.family + " policy using forge.rego.v1 match logic.", Attributes: attrs}
 }
@@ -204,7 +226,7 @@ func (r *regoPolicyResource) ModifyPlan(ctx context.Context, request resource.Mo
 	}
 	// A Resource created in the same graph has an unknown ID during planning.
 	// Defer server validation until apply, after Terraform resolves that ID.
-	if r.family == "access" && setContainsUnknown(model.Resources) {
+	if r.family == "resource" && setContainsUnknown(model.Resources) {
 		return
 	}
 	if !model.ValidationToken.IsNull() && !model.ValidationToken.IsUnknown() && model.ValidationToken.ValueString() != "" {
@@ -334,6 +356,7 @@ func (r *regoPolicyResource) flatten(ctx context.Context, item policyAPIItem, m 
 	m.Groups, m.GroupDirectoryIDs = qualifiedSelectorState(ctx, selected(scopeSelectors, scope, "groups"), diagnostics)
 	m.ServiceAccounts = types.SetNull(types.StringType)
 	m.Action = types.StringValue(stringFrom(definition["action"]))
+	m.DataTarget = types.StringNull()
 	m.Message = types.StringNull()
 	logic := object(definition["logic"])
 	m.Module, m.ModuleSHA, m.Conditions, m.CustomFields = types.StringNull(), types.StringNull(), types.DynamicNull(), types.DynamicNull()
@@ -347,7 +370,8 @@ func (r *regoPolicyResource) flatten(ctx context.Context, item policyAPIItem, m 
 		m.CustomFields = dynamicFromGo(customFields, diagnostics)
 	}
 	m.AutoApprove = types.BoolNull()
-	if r.family == "content" {
+	switch r.family {
+	case "content":
 		m.AcknowledgeBroadScope = types.BoolValue(boolFrom(definition["acknowledgeBroadScope"]))
 		m.Message = optionalString(definition["message"])
 		if approval := object(definition["approval"]); approval != nil {
@@ -358,26 +382,7 @@ func (r *regoPolicyResource) flatten(ctx context.Context, item policyAPIItem, m 
 		m.Agents = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "agents"), diagnostics)
 		m.Products = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "products"), diagnostics)
 		m.EnforcedBy = types.SetNull(types.StringType)
-		redaction := object(definition["redaction"])
-		m.RedactionStrategy = optionalString(redaction["strategy"])
-		m.RedactionReplacement = optionalString(redaction["replacement"])
-		m.RedactionPaths = setStringState(ctx, redaction["paths"], diagnostics)
-		m.RedactionKeepStart = optionalInt64(redaction["keepStart"])
-		m.RedactionKeepEnd = optionalInt64(redaction["keepEnd"])
-		m.RedactionMask = optionalString(redaction["maskCharacter"])
-		m.RedactionSaltRef = optionalString(redaction["saltRef"])
-		m.RedactionFakeSubtype = optionalString(redaction["subtype"])
-		m.RedactionApplyTo = optionalString(redaction["applyTo"])
-		m.RedactionPattern = optionalString(redaction["pattern"])
-		filter := object(definition["filter"])
-		removeWhere := object(filter["removeWhere"])
-		m.FilterCollectionPath = optionalString(filter["collectionPath"])
-		m.FilterPath = optionalString(removeWhere["path"])
-		m.FilterOperator = optionalString(removeWhere["op"])
-		m.FilterValue = dynamicFromGo(removeWhere["value"], diagnostics)
-		m.FilterOnUnavailable = optionalString(filter["onUnavailable"])
-	} else {
-		m.Enforcement = types.StringValue(firstNonEmptyTerraformString(stringFrom(definition["enforcement"]), "enforce"))
+	case "access":
 		m.Severity = types.StringValue(firstNonEmptyTerraformString(stringFrom(definition["severity"]), "medium"))
 		m.AcknowledgeBroadScope = types.BoolValue(boolFrom(definition["acknowledgeBroadScope"]))
 		m.EnforcementSurfaces = setStringState(ctx, definition["enforcementSurfaces"], diagnostics)
@@ -390,13 +395,47 @@ func (r *regoPolicyResource) flatten(ctx context.Context, item policyAPIItem, m 
 		}
 		m.Devices = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "devices"), diagnostics)
 		m.ServiceAccounts = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "serviceAccounts"), diagnostics)
-		m.Resources = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "resources"), diagnostics)
 		m.EnforcedBy = setStringStateDefaultEmpty(ctx, selected(selectors, definition, "enforcedBy"), diagnostics)
-		remediation := object(definition["remediation"])
-		_ = remediation
+	case "resource":
+		m.Enforcement = types.StringValue(firstNonEmptyTerraformString(stringFrom(definition["enforcement"]), "enforce"))
+		m.Severity = types.StringValue(firstNonEmptyTerraformString(stringFrom(definition["severity"]), "medium"))
+		m.AcknowledgeBroadScope = types.BoolValue(boolFrom(definition["acknowledgeBroadScope"]))
+		m.Devices = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "devices"), diagnostics)
+		m.ServiceAccounts = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "serviceAccounts"), diagnostics)
+		m.Resources = setStringStateDefaultEmpty(ctx, selected(scopeSelectors, scope, "resources"), diagnostics)
+		m.DataTarget = optionalString(definition["dataTarget"])
+		if approval := object(definition["approval"]); approval != nil {
+			m.ApprovalMode = optionalString(approval["mode"])
+		}
+		m.Message = optionalString(definition["message"])
+		m.EnforcedBy = types.SetNull(types.StringType)
+	}
+	if r.family == "content" || r.family == "resource" {
+		flattenDataAction(ctx, definition, m, diagnostics)
 	}
 	m.CurrentRevision = types.Int64Value(item.CurrentRevision)
 	m.DefinitionSHA = types.StringValue(item.DefinitionSHA)
+}
+
+func flattenDataAction(ctx context.Context, definition map[string]any, m *regoPolicyModel, diagnostics *diag.Diagnostics) {
+	redaction := object(definition["redaction"])
+	m.RedactionStrategy = optionalString(redaction["strategy"])
+	m.RedactionReplacement = optionalString(redaction["replacement"])
+	m.RedactionPaths = setStringState(ctx, redaction["paths"], diagnostics)
+	m.RedactionKeepStart = optionalInt64(redaction["keepStart"])
+	m.RedactionKeepEnd = optionalInt64(redaction["keepEnd"])
+	m.RedactionMask = optionalString(redaction["maskCharacter"])
+	m.RedactionSaltRef = optionalString(redaction["saltRef"])
+	m.RedactionFakeSubtype = optionalString(redaction["subtype"])
+	m.RedactionApplyTo = optionalString(redaction["applyTo"])
+	m.RedactionPattern = optionalString(redaction["pattern"])
+	filter := object(definition["filter"])
+	removeWhere := object(filter["removeWhere"])
+	m.FilterCollectionPath = optionalString(filter["collectionPath"])
+	m.FilterPath = optionalString(removeWhere["path"])
+	m.FilterOperator = optionalString(removeWhere["op"])
+	m.FilterValue = dynamicFromGo(removeWhere["value"], diagnostics)
+	m.FilterOnUnavailable = optionalString(filter["onUnavailable"])
 }
 
 func (r *regoPolicyResource) Delete(ctx context.Context, q resource.DeleteRequest, p *resource.DeleteResponse) {
@@ -475,7 +514,8 @@ func (r *regoPolicyResource) buildMutation(ctx context.Context, m regoPolicyMode
 	serviceAccounts := toStrings(m.ServiceAccounts)
 	module := m.Module.ValueString()
 	var evaluationPoints []string
-	if r.family == "content" {
+	switch r.family {
+	case "content":
 		diagnostics.Append(m.EvaluateOn.ElementsAs(ctx, &evaluationPoints, false)...)
 	}
 	moduleSet := module != ""
@@ -547,64 +587,19 @@ func (r *regoPolicyResource) buildMutation(ctx context.Context, m regoPolicyMode
 		}
 		definition["exceptions"] = exceptions
 	}
-	if r.family == "content" {
+	switch r.family {
+	case "content":
 		scope["serviceAccounts"] = serviceAccounts
 		definition["evaluateOn"] = evaluationPoints
 		definition["acknowledgeBroadScope"] = m.AcknowledgeBroadScope.ValueBool()
 		scope["agents"] = toStrings(m.Agents)
 		scope["products"] = toStrings(m.Products)
-		if m.Action.ValueString() == "redact" {
-			strategy := m.RedactionStrategy.ValueString()
-			if strategy == "" {
-				strategy = "constant"
-			}
-			redaction := map[string]any{"strategy": strategy}
-			paths := toStrings(m.RedactionPaths)
-			if len(paths) > 0 {
-				redaction["paths"] = paths
-			}
-			if !m.RedactionReplacement.IsNull() {
-				redaction["replacement"] = m.RedactionReplacement.ValueString()
-			}
-			if !m.RedactionKeepStart.IsNull() {
-				redaction["keepStart"] = m.RedactionKeepStart.ValueInt64()
-			}
-			if !m.RedactionKeepEnd.IsNull() {
-				redaction["keepEnd"] = m.RedactionKeepEnd.ValueInt64()
-			}
-			if !m.RedactionMask.IsNull() {
-				redaction["maskCharacter"] = m.RedactionMask.ValueString()
-			}
-			if !m.RedactionSaltRef.IsNull() {
-				redaction["saltRef"] = m.RedactionSaltRef.ValueString()
-			}
-			if !m.RedactionFakeSubtype.IsNull() {
-				redaction["subtype"] = m.RedactionFakeSubtype.ValueString()
-			}
-			if !m.RedactionApplyTo.IsNull() {
-				redaction["applyTo"] = m.RedactionApplyTo.ValueString()
-			}
-			if !m.RedactionPattern.IsNull() {
-				redaction["pattern"] = m.RedactionPattern.ValueString()
-			}
-			definition["redaction"] = redaction
-		}
-		if m.Action.ValueString() == "filter" {
-			filterValue, valueErr := terraformDynamicToGo(m.FilterValue)
-			if valueErr != nil {
-				diagnostics.AddError("Invalid filter value", valueErr.Error())
-				return nil, nil
-			}
-			definition["filter"] = map[string]any{"collectionPath": m.FilterCollectionPath.ValueString(), "removeWhere": map[string]any{"path": m.FilterPath.ValueString(), "op": m.FilterOperator.ValueString(), "value": filterValue}, "onUnavailable": m.FilterOnUnavailable.ValueString()}
-		}
 		if !m.Message.IsNull() {
 			definition["message"] = m.Message.ValueString()
 		}
-	} else {
+	case "access":
 		scope["devices"] = toStrings(m.Devices)
 		scope["serviceAccounts"] = serviceAccounts
-		scope["resources"] = toStrings(m.Resources)
-		definition["enforcement"] = firstNonEmptyTerraformString(m.Enforcement.ValueString(), "enforce")
 		definition["severity"] = firstNonEmptyTerraformString(m.Severity.ValueString(), "medium")
 		definition["acknowledgeBroadScope"] = m.AcknowledgeBroadScope.ValueBool()
 		definition["enforcementSurfaces"] = toStrings(m.EnforcementSurfaces)
@@ -630,11 +625,28 @@ func (r *regoPolicyResource) buildMutation(ctx context.Context, m regoPolicyMode
 		} else if value != nil {
 			definition["remediation"] = value
 		}
+	case "resource":
+		scope["devices"] = toStrings(m.Devices)
+		scope["serviceAccounts"] = serviceAccounts
+		scope["resources"] = toStrings(m.Resources)
+		definition["enforcement"] = firstNonEmptyTerraformString(m.Enforcement.ValueString(), "enforce")
+		definition["severity"] = firstNonEmptyTerraformString(m.Severity.ValueString(), "medium")
+		definition["acknowledgeBroadScope"] = m.AcknowledgeBroadScope.ValueBool()
+		if !m.DataTarget.IsNull() {
+			definition["dataTarget"] = m.DataTarget.ValueString()
+		}
+		if !m.Message.IsNull() {
+			definition["message"] = m.Message.ValueString()
+		}
+	}
+	if r.family == "content" || r.family == "resource" {
+		appendDataAction(ctx, definition, m, diagnostics)
 	}
 	if m.Action.ValueString() == "require_approval" {
-		if r.family == "access" {
+		switch r.family {
+		case "access", "resource":
 			definition["approval"] = map[string]any{"mode": firstNonEmptyTerraformString(m.ApprovalMode.ValueString(), "admin_approval")}
-		} else {
+		case "content":
 			definition["approval"] = map[string]any{"autoApproveOnRequest": m.AutoApprove.ValueBool()}
 		}
 	}
@@ -642,12 +654,17 @@ func (r *regoPolicyResource) buildMutation(ctx context.Context, m regoPolicyMode
 		return nil, nil
 	}
 	scopeSelectors := nonemptyMap(map[string]any{"users": userSelectors, "groups": groupSelectors})
-	if r.family == "content" {
+	switch r.family {
+	case "content":
 		scopeSelectors["serviceAccounts"] = serviceAccounts
 		scopeSelectors["agents"] = toStrings(m.Agents)
 		scopeSelectors["products"] = toStrings(m.Products)
 		scopeSelectors = nonemptyMap(scopeSelectors)
-	} else {
+	case "access":
+		scopeSelectors["devices"] = toStrings(m.Devices)
+		scopeSelectors["serviceAccounts"] = serviceAccounts
+		scopeSelectors = nonemptyMap(scopeSelectors)
+	case "resource":
 		scopeSelectors["devices"] = toStrings(m.Devices)
 		scopeSelectors["serviceAccounts"] = serviceAccounts
 		scopeSelectors["resources"] = toStrings(m.Resources)
@@ -658,6 +675,39 @@ func (r *regoPolicyResource) buildMutation(ctx context.Context, m regoPolicyMode
 		selectors["enforcedBy"] = toStrings(m.EnforcedBy)
 	}
 	return definition, map[string]any{"tool": "terraform", "resource": "forge_" + r.family + "_policy." + m.ID.ValueString(), "selectors": nonemptyMap(selectors)}
+}
+
+func appendDataAction(ctx context.Context, definition map[string]any, m regoPolicyModel, diagnostics *diag.Diagnostics) {
+	if m.Action.ValueString() == "redact" {
+		strategy := firstNonEmptyTerraformString(m.RedactionStrategy.ValueString(), "constant")
+		redaction := map[string]any{"strategy": strategy}
+		var paths []string
+		if !m.RedactionPaths.IsNull() && !m.RedactionPaths.IsUnknown() {
+			diagnostics.Append(m.RedactionPaths.ElementsAs(ctx, &paths, false)...)
+		}
+		if len(paths) > 0 {
+			redaction["paths"] = paths
+		}
+		for key, value := range map[string]types.String{"replacement": m.RedactionReplacement, "maskCharacter": m.RedactionMask, "saltRef": m.RedactionSaltRef, "subtype": m.RedactionFakeSubtype, "applyTo": m.RedactionApplyTo, "pattern": m.RedactionPattern} {
+			if !value.IsNull() {
+				redaction[key] = value.ValueString()
+			}
+		}
+		for key, value := range map[string]types.Int64{"keepStart": m.RedactionKeepStart, "keepEnd": m.RedactionKeepEnd} {
+			if !value.IsNull() {
+				redaction[key] = value.ValueInt64()
+			}
+		}
+		definition["redaction"] = redaction
+	}
+	if m.Action.ValueString() == "filter" {
+		filterValue, err := terraformDynamicToGo(m.FilterValue)
+		if err != nil {
+			diagnostics.AddError("Invalid filter value", err.Error())
+			return
+		}
+		definition["filter"] = map[string]any{"collectionPath": m.FilterCollectionPath.ValueString(), "removeWhere": map[string]any{"path": m.FilterPath.ValueString(), "op": m.FilterOperator.ValueString(), "value": filterValue}, "onUnavailable": m.FilterOnUnavailable.ValueString()}
+	}
 }
 
 func optionalTerraformDynamicObject(value types.Dynamic) (any, error) {

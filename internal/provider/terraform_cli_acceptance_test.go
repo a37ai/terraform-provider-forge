@@ -377,6 +377,32 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 	planPath := filepath.Join(work, "all-schemas.tfplan")
 	runAcceptanceCommand(t, terraform, []string{"plan", "-out=" + planPath, "-input=false", "-no-color"}, work, env)
 	runAcceptanceCommand(t, terraform, []string{"apply", "-input=false", "-no-color", planPath}, work, env)
+	mu.Lock()
+	resourceDefinitions := map[string]map[string]any{}
+	for _, id := range []string{"production-database-deletes", "resource-matrix-allow", "resource-matrix-review", "resource-matrix-redact", "resource-matrix-filter", "resource-matrix-approval"} {
+		item := stored["resource-policies/"+id]
+		if item == nil {
+			mu.Unlock()
+			t.Fatalf("Resource action %s was not created", id)
+		}
+		resourceDefinitions[id] = item.Definition
+	}
+	mu.Unlock()
+	if object(resourceDefinitions["resource-matrix-allow"]["logic"])["module"] == nil || resourceDefinitions["resource-matrix-review"]["conditions"] == nil || resourceDefinitions["production-database-deletes"]["conditions"] == nil {
+		t.Fatal("Resource allow, block, and review did not preserve native/Rego authoring")
+	}
+	redactDefinition := resourceDefinitions["resource-matrix-redact"]
+	if redactDefinition["dataTarget"] != "postgres_result" || object(redactDefinition["redaction"])["replacement"] != "[REDACTED]" {
+		t.Fatalf("Resource redaction was not preserved: %+v", redactDefinition)
+	}
+	filterDefinition := resourceDefinitions["resource-matrix-filter"]
+	if filterDefinition["dataTarget"] != "http_response_body" || object(filterDefinition["filter"])["collectionPath"] != "$.records" || object(filterDefinition["logic"])["module"] == nil {
+		t.Fatalf("Resource filter was not preserved: %+v", filterDefinition)
+	}
+	approvalDefinition := resourceDefinitions["resource-matrix-approval"]
+	if object(approvalDefinition["approval"])["mode"] != "admin_approval" || object(approvalDefinition["logic"])["module"] == nil {
+		t.Fatalf("Resource approval was not preserved: %+v", approvalDefinition)
+	}
 	if output := runAcceptanceCommand(t, terraform, []string{"plan", "-detailed-exitcode", "-input=false", "-no-color"}, work, env); !strings.Contains(output, "No changes") {
 		t.Fatalf("all-resource no-op plan was not stable:\n%s", output)
 	}
@@ -391,6 +417,12 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 	}{
 		{"forge_content_policy.allow", "matrix-allow"},
 		{"forge_access_policy.unmanaged_device", "unmanaged-device"},
+		{"forge_resource_policy.production_database_deletes", "production-database-deletes"},
+		{"forge_resource_policy.allow_health", "resource-matrix-allow"},
+		{"forge_resource_policy.review_exports", "resource-matrix-review"},
+		{"forge_resource_policy.redact_database_results", "resource-matrix-redact"},
+		{"forge_resource_policy.filter_api_response", "resource-matrix-filter"},
+		{"forge_resource_policy.approve_database_writes", "resource-matrix-approval"},
 		{"forge_mcp_acl.github_write", "github-write"},
 		{"forge_skill_acl.production_deploy", "production-deploy"},
 	} {
@@ -406,6 +438,7 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 	for before, after := range map[string]string{
 		`name        = "Allow reviewed prompt"`:             `name        = "Allow reviewed prompt updated"`,
 		`name                  = "Block unmanaged devices"`: `name                  = "Block unmanaged devices updated"`,
+		`name        = "Block production database deletes"`: `name        = "Block production database deletes updated"`,
 		`name   = "Restrict GitHub write tools"`:            `name   = "Restrict GitHub write tools updated"`,
 		`skill  = "deploy-production"`:                      `skill  = "deploy-production-updated"`,
 	} {
@@ -427,6 +460,7 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 	for _, key := range []string{
 		"content-policies/matrix-allow",
 		"access-policies/unmanaged-device",
+		"resource-policies/production-database-deletes",
 		"content-policies/github-write",
 		"skill-acls/production-deploy",
 	} {
@@ -459,17 +493,19 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 	}
 	mu.Lock()
 	repaired := map[string]any{
-		"content": stored["content-policies/matrix-allow"].Definition["name"],
-		"access":  stored["access-policies/unmanaged-device"].Definition["name"],
-		"mcp":     stored["content-policies/github-write"].Definition["name"],
-		"skill":   stored["skill-acls/production-deploy"].Definition["effect"],
+		"content":  stored["content-policies/matrix-allow"].Definition["name"],
+		"access":   stored["access-policies/unmanaged-device"].Definition["name"],
+		"resource": stored["resource-policies/production-database-deletes"].Definition["name"],
+		"mcp":      stored["content-policies/github-write"].Definition["name"],
+		"skill":    stored["skill-acls/production-deploy"].Definition["effect"],
 	}
 	mu.Unlock()
 	expectedRepairs := map[string]any{
-		"content": "Allow reviewed prompt updated",
-		"access":  "Block unmanaged devices updated",
-		"mcp":     "Restrict GitHub write tools updated",
-		"skill":   "allow",
+		"content":  "Allow reviewed prompt updated",
+		"access":   "Block unmanaged devices updated",
+		"resource": "Block production database deletes updated",
+		"mcp":      "Restrict GitHub write tools updated",
+		"skill":    "allow",
 	}
 	if !reflect.DeepEqual(repaired, expectedRepairs) {
 		t.Fatalf("GA drift repair mismatch got=%+v want=%+v", repaired, expectedRepairs)
@@ -477,7 +513,7 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 	runAcceptanceCommand(t, terraform, []string{"destroy", "-auto-approve", "-input=false", "-no-color"}, work, env)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(stored) != 0 || gatewayProfile != nil || writes != 24 || deletes != 16 || authority.ManagementMode != "forge" || authority.ManagerID != "" || authority.ManagerInstance != "" || authorityClaims != 1 || authorityReleases != 1 {
+	if len(stored) != 0 || gatewayProfile != nil || writes != 32 || deletes != 22 || authority.ManagementMode != "forge" || authority.ManagerID != "" || authority.ManagerInstance != "" || authorityClaims != 1 || authorityReleases != 1 {
 		t.Fatalf("all-resource lifecycle stores=%d writes=%d writeKeys=%+v deletes=%d authority=%+v claims=%d releases=%d", len(stored), writes, writeKeys, deletes, authority, authorityClaims, authorityReleases)
 	}
 }
@@ -562,7 +598,7 @@ func writeAcceptanceAuthority(w http.ResponseWriter, authority acceptanceAuthori
 }
 
 func isAcceptancePolicyPath(path string) bool {
-	for _, collection := range []string{"content-policies", "access-policies", "skill-acls"} {
+	for _, collection := range []string{"content-policies", "access-policies", "resource-policies", "skill-acls"} {
 		if path == collection || strings.HasPrefix(path, collection+"/") {
 			return true
 		}
@@ -632,7 +668,7 @@ func handleAcceptancePolicyCRUD(w http.ResponseWriter, r *http.Request, path str
 }
 
 func writeAcceptancePolicyForCollection(w http.ResponseWriter, collection string, policy *acceptanceStoredPolicy) {
-	family := map[string]string{"content-policies": "content", "access-policies": "access", "skill-acls": "skill_acl"}[collection]
+	family := map[string]string{"content-policies": "content", "access-policies": "access", "resource-policies": "resource", "skill-acls": "skill_acl"}[collection]
 	raw, _ := json.Marshal(policy.Definition)
 	id, _ := policy.Definition["id"].(string)
 	_ = json.NewEncoder(w).Encode(map[string]any{"item": map[string]any{

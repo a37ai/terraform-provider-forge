@@ -64,6 +64,12 @@ func validateRegoPolicyConfig(ctx context.Context, family string, m regoPolicyMo
 		map[string]bool{"block": true, "redact": true, "filter": true, "nudge": true, "require_approval": true}[action] {
 		problems = append(problems, "acknowledge_broad_scope must be true before enabling a broad disruptive Content policy")
 	}
+	resourceScopeKnown := !m.Users.IsUnknown() && !m.Groups.IsUnknown() && !m.ServiceAccounts.IsUnknown() && !m.Devices.IsUnknown() && !m.Resources.IsUnknown()
+	if family == "resource" && resourceScopeKnown && !m.Enabled.IsUnknown() && m.Enabled.ValueBool() && !m.AcknowledgeBroadScope.ValueBool() &&
+		len(m.Users.Elements()) == 0 && len(m.Groups.Elements()) == 0 && len(m.ServiceAccounts.Elements()) == 0 && len(m.Devices.Elements()) == 0 && len(m.Resources.Elements()) == 0 &&
+		map[string]bool{"block": true, "redact": true, "filter": true, "require_approval": true}[action] {
+		problems = append(problems, "acknowledge_broad_scope must be true before enabling a broad disruptive Resource policy")
+	}
 	knownString := func(value types.String) bool { return !value.IsNull() && !value.IsUnknown() }
 	knownInt := func(value types.Int64) bool { return !value.IsNull() && !value.IsUnknown() }
 	redactionSet := knownString(m.RedactionStrategy) || knownString(m.RedactionReplacement) || (!m.RedactionPaths.IsNull() && !m.RedactionPaths.IsUnknown()) || knownInt(m.RedactionKeepStart) || knownInt(m.RedactionKeepEnd) || knownString(m.RedactionMask) || knownString(m.RedactionSaltRef) || knownString(m.RedactionFakeSubtype) || knownString(m.RedactionApplyTo) || knownString(m.RedactionPattern)
@@ -77,27 +83,25 @@ func validateRegoPolicyConfig(ctx context.Context, family string, m regoPolicyMo
 	if family == "content" && action != "require_approval" && !m.AutoApprove.IsNull() && !m.AutoApprove.IsUnknown() {
 		problems = append(problems, "auto_approve_on_request is only valid when action is require_approval")
 	}
-	if family == "access" && action != "require_approval" && !m.ApprovalMode.IsNull() && !m.ApprovalMode.IsUnknown() {
+	if (family == "access" || family == "resource") && action != "require_approval" && !m.ApprovalMode.IsNull() && !m.ApprovalMode.IsUnknown() {
 		problems = append(problems, "approval_mode is only valid when action is require_approval")
 	}
-	if family == "access" && action == "require_approval" && !m.EnforcementSurfaces.IsNull() && !m.EnforcementSurfaces.IsUnknown() {
-		var surfaces []string
-		_ = m.EnforcementSurfaces.ElementsAs(ctx, &surfaces, false)
-		for _, surface := range surfaces {
-			if surface == "resource_proxy" {
-				problems = append(problems, "require_approval is not supported for resource_proxy")
-				break
-			}
+	dataTargetSet := knownString(m.DataTarget)
+	if family == "resource" {
+		if dataTargetSet && !m.Resources.IsUnknown() && len(m.Resources.Elements()) == 0 {
+			problems = append(problems, "data_target requires at least one selected Resource")
+		}
+		if (action == "redact" || action == "filter") && !dataTargetSet {
+			problems = append(problems, "data_target is required when action is redact or filter")
+		}
+		if action != "redact" && action != "filter" && dataTargetSet {
+			problems = append(problems, "data_target is only valid when action is redact or filter")
+		}
+		if action == "filter" && dataTargetSet && m.DataTarget.ValueString() == "http_request_body" {
+			problems = append(problems, "filter does not support data_target http_request_body")
 		}
 	}
-	if family == "access" && !m.Enforcement.IsNull() && !m.Enforcement.IsUnknown() && m.Enforcement.ValueString() == "monitor" && !m.EnforcementSurfaces.IsNull() && !m.EnforcementSurfaces.IsUnknown() {
-		var surfaces []string
-		_ = m.EnforcementSurfaces.ElementsAs(ctx, &surfaces, false)
-		if len(surfaces) != 1 || surfaces[0] != "resource_proxy" {
-			problems = append(problems, "enforcement = monitor currently requires enforcement_surfaces = [\"resource_proxy\"]")
-		}
-	}
-	if family == "content" && action == "redact" {
+	if (family == "content" || family == "resource") && action == "redact" {
 		strategy := m.RedactionStrategy.ValueString()
 		if strategy == "" {
 			strategy = "constant"
@@ -157,8 +161,20 @@ func validateRegoPolicyConfig(ctx context.Context, family string, m regoPolicyMo
 			problems = append(problems, "nullify redaction does not support match-only redaction")
 		}
 	}
-	if family == "content" && action == "filter" && (m.FilterCollectionPath.IsNull() || m.FilterPath.IsNull() || m.FilterOperator.IsNull() || m.FilterValue.IsNull() || m.FilterOnUnavailable.IsNull()) {
+	if (family == "content" || family == "resource") && action == "filter" && (m.FilterCollectionPath.IsNull() || m.FilterPath.IsNull() || m.FilterOperator.IsNull() || m.FilterValue.IsNull() || m.FilterOnUnavailable.IsNull()) {
 		problems = append(problems, "filter_collection_path, filter_path, filter_operator, filter_value, and filter_on_unavailable are required for filter")
+	}
+	if family == "resource" && dataTargetSet && (m.DataTarget.ValueString() == "postgres_result" || m.DataTarget.ValueString() == "mysql_result") {
+		resultName := "PostgreSQL"
+		if m.DataTarget.ValueString() == "mysql_result" {
+			resultName = "MySQL"
+		}
+		if action == "redact" && (m.RedactionPaths.IsNull() || m.RedactionPaths.IsUnknown()) {
+			problems = append(problems, "redaction_paths is required for "+resultName+" results")
+		}
+		if action == "filter" && knownString(m.FilterCollectionPath) && m.FilterCollectionPath.ValueString() != "$.rows" {
+			problems = append(problems, "filter_collection_path must be $.rows for "+resultName+" results")
+		}
 	}
 	for name, value := range map[string]types.String{"filter_collection_path": m.FilterCollectionPath, "filter_path": m.FilterPath} {
 		if !value.IsNull() && !value.IsUnknown() && !boundedJSONPathPattern.MatchString(value.ValueString()) {
