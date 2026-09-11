@@ -57,6 +57,37 @@ func TestTypedConditionsAcceptEveryCanonicalShape(t *testing.T) {
 	}
 }
 
+func TestTypedResourceConditionsAcceptEveryHistoryShape(t *testing.T) {
+	predicate := func(field, op string, value any) map[string]any {
+		return map[string]any{"field": field, "op": op, "value": value}
+	}
+	cases := map[string]map[string]any{
+		"prior event": {"hasPriorEvent": predicate("request.http.method", "eq", "POST")},
+		"sequence": {"hasEventSequence": map[string]any{
+			"within": "15m", "ordered": true,
+			"events": []any{predicate("process.id", "eq", "client.1"), predicate("request.postgres.command", "eq", "DELETE")},
+		}},
+		"event count": {"eventCount": map[string]any{
+			"within": "1h", "where": predicate("destination.domain", "eq", "db.internal.example"), "op": "gte", "value": float64(3),
+		}},
+		"distinct values": {"priorDistinctValues": map[string]any{
+			"within": "30d", "field": "resource.id", "where": predicate("request.postgres.command", "eq", "SELECT"), "op": "gt", "value": float64(5),
+		}},
+	}
+	for name, condition := range cases {
+		t.Run(name, func(t *testing.T) {
+			value := testDynamic(t, condition)
+			got, err := nativeConditionsFromTerraform(value, "resource")
+			if err != nil {
+				t.Fatalf("Resource condition rejected: %v", err)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(condition) {
+				t.Fatalf("round trip mismatch\n got: %#v\nwant: %#v", got, condition)
+			}
+		})
+	}
+}
+
 func TestTypedConditionsValidateFamiliesShapesAndLimits(t *testing.T) {
 	predicate := func(field, op string, value any) map[string]any {
 		return map[string]any{"field": field, "op": op, "value": value}
@@ -72,6 +103,11 @@ func TestTypedConditionsValidateFamiliesShapesAndLimits(t *testing.T) {
 		{"access predicate", "access", "", predicate("device.platform", "eq", "darwin")},
 		{"family field", "access", "not available", predicate("request.prompt", "eq", "x")},
 		{"stateful access", "access", "only available", map[string]any{"hasPriorEvent": predicate("device.id", "eq", "x")}},
+		{"sequence access", "access", "only available", map[string]any{"hasEventSequence": map[string]any{"within": "1h", "ordered": true, "events": []any{predicate("device.id", "eq", "x"), predicate("device.id", "eq", "y")}}}},
+		{"event count access", "access", "only available", map[string]any{"eventCount": map[string]any{"within": "1h", "where": predicate("device.id", "eq", "x"), "op": "gte", "value": float64(1)}}},
+		{"distinct values access", "access", "only available", map[string]any{"priorDistinctValues": map[string]any{"within": "1h", "field": "device.id", "op": "gte", "value": float64(1)}}},
+		{"resource history content field", "resource", "not available", map[string]any{"hasPriorEvent": predicate("request.prompt", "eq", "x")}},
+		{"resource distinct content field", "resource", "not available", map[string]any{"priorDistinctValues": map[string]any{"within": "1h", "field": "request.prompt", "op": "gte", "value": float64(1)}}},
 		{"unknown field", "content", "not available", predicate("unknown.field", "eq", "x")},
 		{"unknown operator", "content", "not supported", predicate("request.prompt", "wat", "x")},
 		{"operator for field type", "content", "not valid for boolean", predicate("classification.has_unresolved_sensitive_content", "matches", "true")},
@@ -217,6 +253,39 @@ func TestTypedConditionsRefreshRoundTripPreservesNativeHCL(t *testing.T) {
 	}
 }
 
+func TestTypedResourceHistoryConditionsRefreshRoundTrip(t *testing.T) {
+	condition := map[string]any{"eventCount": map[string]any{
+		"within": "1h",
+		"where": map[string]any{"all": []any{
+			map[string]any{"field": "process.id", "op": "eq", "value": "client.1"},
+			map[string]any{"field": "destination.domain", "op": "eq", "value": "db.internal.example"},
+		}},
+		"op": "gte", "value": float64(3),
+	}}
+	item := policyAPIItem{
+		Definition: map[string]any{
+			"id": "repeated-resource-use", "name": "Repeated Resource use", "enabled": true,
+			"appliesTo": map[string]any{"resources": []any{"resource-a"}},
+			"action":    "flag_for_review", "conditions": condition,
+		},
+		SourceRef: map[string]any{"selectors": map[string]any{"appliesTo": map[string]any{"resources": []any{"resource-a"}}}},
+	}
+	model := regoPolicyModel{}
+	var diagnostics diag.Diagnostics
+	resource := &regoPolicyResource{family: "resource"}
+	resource.flatten(context.Background(), item, &model, &diagnostics)
+	if diagnostics.HasError() {
+		t.Fatalf("flatten diagnostics: %v", diagnostics)
+	}
+	roundTrip, err := nativeConditionsFromTerraform(model.Conditions, "resource")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(roundTrip) != fmt.Sprint(condition) {
+		t.Fatalf("refresh changed Resource history conditions: got %#v want %#v", roundTrip, condition)
+	}
+}
+
 func TestTypedConditionsDeferNestedUnknownsDuringPlanning(t *testing.T) {
 	condition := types.DynamicValue(types.ObjectValueMust(
 		map[string]attr.Type{"field": types.StringType, "op": types.StringType, "value": types.StringType},
@@ -250,6 +319,24 @@ func TestTypedAccessConditionsRejectUnknownCanonicalValue(t *testing.T) {
 	}
 }
 
+func TestTypedResourceConditionsAreSeparateFromAccess(t *testing.T) {
+	var diagnostics diag.Diagnostics
+	condition := dynamicFromGo(map[string]any{
+		"field": "request.postgres.command",
+		"op":    "eq",
+		"value": "DELETE",
+	}, &diagnostics)
+	if diagnostics.HasError() {
+		t.Fatalf("dynamic condition diagnostics: %v", diagnostics)
+	}
+	if _, err := nativeConditionsFromTerraform(condition, "resource"); err != nil {
+		t.Fatalf("Resource condition was rejected: %v", err)
+	}
+	if _, err := nativeConditionsFromTerraform(condition, "access"); err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("Access unexpectedly accepted a Resource condition: %v", err)
+	}
+}
+
 func FuzzTypedConditionsNeverPanic(f *testing.F) {
 	f.Add("request.prompt", "eq", "hello")
 	f.Add("device.platform", "matches", "[")
@@ -259,6 +346,7 @@ func FuzzTypedConditionsNeverPanic(f *testing.F) {
 		if !diagnostics.HasError() {
 			_, _ = nativeConditionsFromTerraform(dynamic, "content")
 			_, _ = nativeConditionsFromTerraform(dynamic, "access")
+			_, _ = nativeConditionsFromTerraform(dynamic, "resource")
 		}
 	})
 }

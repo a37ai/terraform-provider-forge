@@ -33,7 +33,7 @@ func (d *regoTestDataSource) Metadata(_ context.Context, request datasource.Meta
 func (d *regoTestDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, response *datasource.SchemaResponse) {
 	response.Schema = schema.Schema{Description: "Compile and evaluate Forge Rego authoritatively during Terraform tests.", Attributes: map[string]schema.Attribute{
 		"id":             schema.StringAttribute{Computed: true},
-		"family":         schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf("content", "access")}},
+		"family":         schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf("content", "access", "resource")}},
 		"module":         schema.StringAttribute{Required: true, Description: "forge.rego.v1 module source."},
 		"evaluate_on":    schema.SetAttribute{Optional: true, ElementType: types.StringType},
 		"input":          schema.DynamicAttribute{Required: true, Description: "Native HCL value supplied as the Forge Rego input."},

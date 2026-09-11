@@ -160,6 +160,11 @@ func TestClientRetriesOnlyExplicitlyIdempotentPosts(t *testing.T) {
 		t.Fatalf("idempotent policy create attempts=%d", attempts.Load())
 	}
 	attempts.Store(0)
+	_ = client.Do(context.Background(), http.MethodPost, "resource-policies", map[string]any{}, nil)
+	if attempts.Load() != 4 {
+		t.Fatalf("idempotent Resource policy create attempts=%d", attempts.Load())
+	}
+	attempts.Store(0)
 	_ = client.Do(context.Background(), http.MethodPost, "policy-authority/p/claim", map[string]any{}, nil)
 	if attempts.Load() != 4 {
 		t.Fatalf("authority POST attempts=%d", attempts.Load())

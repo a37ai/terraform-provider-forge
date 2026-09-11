@@ -23,6 +23,11 @@ provider "forge" {
   # api_token may be supplied with FORGE_API_TOKEN
 }
 
+resource "forge_resource_gateway" "production" {
+  name     = "Production access"
+  hostname = "resources.example.com"
+}
+
 resource "forge_content_policy" "customer_export" {
   id          = "customer-export"
   name        = "Protect customer exports"
@@ -68,6 +73,7 @@ resource "forge_resource" "production_database" {
   # For a private CA only; omit this to use system trust roots.
   # upstream_ca_pem = trimspace(file("private-ca.pem"))
   transparent_routing = true
+  gateway_id          = forge_resource_gateway.production.id
 }
 
 variable "production_database_password" {
@@ -86,21 +92,33 @@ resource "forge_resource_credential" "production_database" {
   default        = true
 }
 
-resource "forge_access_policy" "production_database_deletes" {
-  id                   = "block-production-database-deletes"
-  name                 = "Block production database deletes"
-  enabled              = true
-  action               = "block"
-  severity             = "high"
-  enforcement_surfaces = ["resource_proxy"]
-  resources            = [forge_resource.production_database.id]
-  enforcement          = "enforce"
+resource "forge_resource_policy" "production_database_deletes" {
+  id          = "block-production-database-deletes"
+  name        = "Block production database deletes"
+  enabled     = true
+  action      = "block"
+  severity    = "high"
+  resources   = [forge_resource.production_database.id]
+  enforcement = "enforce"
+  message     = "Production DELETE commands are not allowed."
 
   conditions = {
     field = "request.postgres.command"
     op    = "eq"
     value = "DELETE"
   }
+}
+
+resource "forge_resource_policy" "production_database_results" {
+  id                    = "protect-production-database-results"
+  name                  = "Protect customer email results"
+  action                = "redact"
+  data_target           = "postgres_result"
+  resources             = [forge_resource.production_database.id]
+  redaction_strategy    = "constant"
+  redaction_replacement = "[REDACTED]"
+  redaction_paths       = ["$.email"]
+  conditions            = { field = "request.postgres.tables", op = "contains", value = "customers" }
 }
 
 resource "forge_skill_acl" "deploy" {
@@ -146,16 +164,16 @@ before planning:
 terraform state replace-provider registry.terraform.io/forge/forge registry.terraform.io/a37ai/forge
 ```
 
-Resources: `forge_resource`, `forge_resource_credential`,
-`forge_content_policy`, `forge_access_policy`,
+Resources: `forge_resource`, `forge_resource_gateway`, `forge_resource_credential`,
+`forge_content_policy`, `forge_access_policy`, `forge_resource_policy`,
 `forge_llm_gateway_access_profile`, `forge_llm_gateway_service_account`,
 `forge_llm_gateway_managed_access_override`,
 `forge_device_gateway_identity_assignment`, `forge_mcp_acl`,
 `forge_skill_acl`, and `forge_policy_authority`.
 `forge_policy_authority` is the explicit, revision-bound
-adoption/release resource for an existing console-authored policy. The first two
-accept exactly one `forge.rego.v1` module or a native recursive HCL
-`conditions` object. The LLM gateway resource mirrors the native access profile
+adoption/release resource for an existing console-authored policy. All three
+policy resources accept exactly one `forge.rego.v1` module or a native
+recursive HCL `conditions` object. The LLM gateway resource mirrors the native access profile
 and atomic route-plan API; it does not create a second compiled gateway policy.
 Use `model_patterns`; route providers are selected by exact configured display
 name and resolved to stable IDs by Forge. Runtime identity and profile
@@ -172,16 +190,55 @@ selector and fails on missing or ambiguous results. `forge_rego_test` evaluates
 a module against native HCL input through Forge's authoritative compiler for
 use in `terraform test`.
 
-The Rego policy resources expose typed scope sets, family action enums,
+The three Rego policy resources expose typed scope sets, family action enums,
 Content evaluation stages, approvals, every redaction strategy, structured
 filters with dynamically typed JSON comparison values, and the complete Access
 contract: enforcement surfaces, severity, broad-scope acknowledgement, runtime
 posture, structured notifications, approval mode, and trigger-bound remediation
 authorizations. Access policies use `approval_mode = "admin_approval"` or
 `"self_serve"`; endpoint-route approval is route-scoped rather than a Forge
-agent session or single invocation. Native gateway route plans and ACLs use
-bounded ordered lists or unique sets as appropriate. Rego
-source is always compiled by the authoritative server before a mutation.
+agent session or single invocation. Resource policies use authenticated users,
+groups, devices, service accounts, and Resources with HTTP, PostgreSQL, MySQL,
+and Redis request fields, an optional customer-facing denial message, and
+`enforce` or `monitor` mode.
+For Resource data actions, `data_target` selects `http_request_body`,
+`http_response_body`, `postgres_result`, or `mysql_result`. Redaction and
+filtering use the same typed attributes as Content policies; Resource approval uses
+`approval_mode = "admin_approval"` or `"self_serve"`. A `forge.resource` Rego
+module supplies only the match predicate—action, target, and action settings
+remain explicit Terraform attributes.
+
+`forge_resource_gateway` creates the customer-deployed runtime used for direct
+and automatic Resource access.
+Its configurable fields are only `name`, `hostname`, and `enabled`. Assign it
+with `forge_resource.gateway_id`; a Resource can be catalogued without an
+assignment, but it cannot be routed directly or automatically. Forge generates
+the Resource's read-only `access_name`. Runtime enrollment remains a one-time Console workflow, so no
+deployment credential is returned to Terraform or stored in state.
+Native gateway route plans and ACLs use bounded ordered lists or unique sets as
+appropriate. Rego source is always compiled by the authoritative server before
+a mutation.
+
+## Migrating Resource policies from Access
+
+Resource rules formerly declared as `forge_access_policy` move to
+`forge_resource_policy`. Change the resource type in configuration, remove
+`enforcement_surfaces = ["resource_proxy"]`, and preserve the remaining
+Resource scope, conditions, action, severity, and monitoring fields. A
+customer-facing `message` may now be added directly to the Resource policy.
+Then move
+the existing Terraform address before planning:
+
+```sh
+terraform state mv \
+  'forge_access_policy.production_database_deletes' \
+  'forge_resource_policy.production_database_deletes'
+terraform plan
+```
+
+Forge migrates the corresponding server policy to the Resource family. There
+is no Access compatibility alias, so do not leave Resource fields or
+`resource_proxy` on `forge_access_policy`.
 
 ## Apply and verify
 
@@ -203,13 +260,14 @@ and enforcement surfaces before Terraform can apply a mutation. A validation
 error therefore means the proposed policy is not executable on the selected
 surface; correct the policy instead of bypassing the plan.
 
-Import is supported for Resources, Resource credentials, Content policies,
+Import is supported for Resources, Resource Gateways, Resource credentials, Content policies,
 Access policies, MCP ACLs, skill ACLs, LLM Gateway access profiles, and
 policy-authority bindings:
 
 ```sh
 terraform import forge_content_policy.example existing-policy-id
 terraform import forge_resource.example existing-resource-id
+terraform import forge_resource_gateway.example existing-gateway-id
 terraform import forge_resource_credential.example existing-resource-id/existing-credential-id
 ```
 
@@ -219,6 +277,13 @@ to keep the value absent from both saved plans and state; Forge never returns it
 Increment `secret_version` and provide `secret` to rotate it. Import does not
 recover the secret and initializes the local version counter at `1`; configure
 a higher value only when you provide the next replacement.
+PostgreSQL and MySQL can instead use `aws_rds_iam` with `aws_region` and an
+optional `aws_role_arn`, storing no destination password. HTTP can use
+`oauth2_client_credentials` with `oauth_token_endpoint`, `oauth_client_id`,
+optional `oauth_scopes`/`oauth_audience`, and a write-only client secret; the
+Gateway obtains and caches the temporary bearer token after policy allows the
+request. HTTP can also use keyless `oauth2_token_exchange` to exchange the
+caller's short-lived Forge Resource token, with tokens isolated per caller.
 
 The remote object must already be owned by the same Terraform manager,
 manager instance, and service-account principal. Console-managed policies must

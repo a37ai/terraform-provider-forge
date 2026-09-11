@@ -1,8 +1,8 @@
 # Policy example
 
-This example manages representative Content and Access policies, HTTPS and
-PostgreSQL Resources with credentials, an LLM Gateway access profile, and an
-MCP ACL.
+This example manages representative Content, Access, and Resource policies, a
+customer-deployed Resource Gateway, HTTPS and PostgreSQL Resources with
+credentials, an LLM Gateway access profile, and an MCP ACL.
 
 Before running it:
 
@@ -21,6 +21,23 @@ Before running it:
    selectors.
 6. Keep `manager_id` and `manager_instance` stable for the lifetime of the
    workspace.
+
+After apply, open the Resource Gateway in Forge Console and create its one-time
+Docker Compose files. Save them in the target network and run the displayed
+command. The deployment credential is deliberately absent from the Terraform
+schema and state.
+
+Once the Gateway is online, authenticate each direct client with a short-lived
+Resource token. The command prints only the token, so it can be passed straight
+to the client without writing it to disk:
+
+```sh
+curl https://resources.example.com/health \
+  --header "Proxy-Authorization: Bearer $(forge resources token 'Internal API')"
+
+PGPASSWORD="$(forge resources token 'Production PostgreSQL')" \
+  psql 'host=resources.example.com port=5432 dbname=app@production-postgresql user=forge_app sslmode=require'
+```
 
 Changing a credential secret requires incrementing `secret_version`. The
 secret is sent only during creation or that explicit rotation and is never

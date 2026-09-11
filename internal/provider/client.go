@@ -375,7 +375,7 @@ func newIdempotencyKey() (string, error) {
 
 func retryableRequest(method, path string) bool {
 	clean := strings.TrimLeft(path, "/")
-	idempotentCreate := map[string]bool{"content-policies": true, "access-policies": true, "skill-acls": true, "resources": true}
+	idempotentCreate := map[string]bool{"content-policies": true, "access-policies": true, "resource-policies": true, "skill-acls": true, "resources": true}
 	resourceCredentialCreate := strings.HasPrefix(clean, "resources/") && strings.HasSuffix(clean, "/credentials")
 	return method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete || (method == http.MethodPost && (strings.HasPrefix(clean, "policy-authority/") || clean == "policy-code/rego/validate" || clean == "policy-plans/validate" || idempotentCreate[clean] || resourceCredentialCreate))
 }
