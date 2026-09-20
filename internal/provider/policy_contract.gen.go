@@ -29,7 +29,7 @@ var canonicalContentFields = []string{"identity.user_id", "identity.group_ids", 
 
 var canonicalAccessFields = []string{"identity.user_id", "identity.group_ids", "device.id", "device.platform", "product.id", "provider.id", "destination.domain", "destination.ip", "destination.port", "destination.protocol", "process.id", "process.entrypoint_id", "process.name", "process.path", "process.local_port", "browser.extension_id", "browser.extension_identity_id", "browser.extension_surface", "browser.account_id", "browser.account_domain", "browser.account_state", "browser.account_truth_state", "classification.state", "route.posture", "account.posture", "account.access_state", "account.profile_id", "control.path_kind", "source.family", "source.capability", "source.health_state", "local_model.governance_state", "local_model.proof_level", "local_model.name"}
 
-var canonicalResourceFields = []string{"identity.user_id", "identity.group_ids", "identity.service_account_id", "device.id", "process.id", "destination.domain", "resource.id", "resource.protocol", "request.http.method", "request.http.path", "request.http.content_type", "request.postgres.database", "request.postgres.user", "request.postgres.command", "request.postgres.schemas", "request.postgres.tables", "request.postgres.fingerprint", "request.mysql.database", "request.mysql.user", "request.mysql.command", "request.mysql.tables", "request.mysql.fingerprint", "request.redis.user", "request.redis.database", "request.redis.command"}
+var canonicalResourceFields = []string{"identity.user_id", "identity.group_ids", "identity.service_account_id", "device.id", "product.id", "process.id", "destination.domain", "resource.id", "resource.protocol", "request.http.method", "request.http.path", "request.http.content_type", "request.postgres.database", "request.postgres.user", "request.postgres.command", "request.postgres.schemas", "request.postgres.tables", "request.postgres.fingerprint", "request.mysql.database", "request.mysql.user", "request.mysql.command", "request.mysql.tables", "request.mysql.fingerprint", "request.redis.user", "request.redis.database", "request.redis.command"}
 
 var canonicalConditionKinds = []string{"predicate", "all", "any", "not", "has_prior_event", "has_event_sequence", "event_count", "prior_distinct_values"}
 
@@ -138,6 +138,7 @@ var canonicalResourceFieldTypes = map[string]string{"destination.domain": "strin
 	"identity.service_account_id":  "string",
 	"identity.user_id":             "string",
 	"process.id":                   "string",
+	"product.id":                   "string",
 	"request.http.content_type":    "string",
 	"request.http.method":          "string",
 	"request.http.path":            "string",
