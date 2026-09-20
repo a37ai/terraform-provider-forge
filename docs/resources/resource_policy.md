@@ -48,6 +48,31 @@ resource "forge_resource_policy" "approve_redis_deletes" {
 }
 ```
 
+Automatically routed traffic can be limited to products from the Forge
+catalog. Every recognized product in the process ancestry is considered, so a
+nested tool cannot hide its parent product:
+
+```hcl
+resource "forge_resource_policy" "block_codex_production_deletes" {
+  id        = "block-codex-production-deletes"
+  name      = "Block Codex production deletes"
+  resources = [forge_resource.production_database.id]
+  action    = "block"
+  message   = "Use the reviewed migration workflow for production deletes."
+
+  conditions = {
+    all = [
+      { field = "product.id", op = "in", value = ["openai/codex"] },
+      { field = "request.postgres.command", op = "eq", value = "DELETE" }
+    ]
+  }
+}
+```
+
+`product.id` is unavailable for direct Resource gateway connections because
+they do not carry trusted endpoint process context. Product-scoped rules do not
+match those connections; other applicable Resource rules still do.
+
 The Rego module is only the match predicate. Keep `action`, `data_target`, and
 redaction, filtering, or approval settings in typed Terraform attributes.
 
@@ -65,7 +90,7 @@ redaction, filtering, or approval settings in typed Terraform attributes.
 
 - `acknowledge_broad_scope` (Boolean) Required before enabling a broad disruptive Resource policy.
 - `compliance_frameworks` (Set of String)
-- `conditions` (Dynamic) A native HCL Resource condition using Resource fields, including `process.id` and `destination.domain`; `field`/`op`/`value` leaves; `all`, `any`, and `not`; or prior-event, sequence, count, and distinct-value conditions. Set exactly one of `conditions` or `module`.
+- `conditions` (Dynamic) A native HCL Resource condition using Resource fields, including `product.id` for originating products on automatically routed traffic, `process.id`, and `destination.domain`; `field`/`op`/`value` leaves; `all`, `any`, and `not`; or prior-event, sequence, count, and distinct-value conditions. Set exactly one of `conditions` or `module`.
 - `description` (String)
 - `data_target` (String) Data transformed by `redact` or `filter`: `http_request_body`, `http_response_body`, `postgres_result`, or `mysql_result`.
 - `devices` (Set of String)
@@ -118,7 +143,8 @@ terraform import forge_resource_policy.production_database production-database-d
 ```
 
 Native conditions and `forge.resource` Rego input support proven caller
-identity, device and process IDs, destination domain, Resource identity and
+identity, device and process IDs, originating product IDs for automatically
+routed traffic, destination domain, Resource identity and
 protocol, HTTP request metadata, PostgreSQL and MySQL query metadata, and Redis
 user, database, and command metadata. Rego defines
 only the match predicate; action, data target, redaction/filter settings, and
