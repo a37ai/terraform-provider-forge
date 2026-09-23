@@ -97,7 +97,7 @@ func (r *resourceCredentialResource) Schema(_ context.Context, _ resource.Schema
 		}
 	}
 	response.Schema = schema.Schema{
-		Description: "A credential Forge uses to connect to one Resource.",
+		Description: "A credential Forge uses to connect to one Resource. Selection follows service account, user, group, then default precedence. Forge rejects the connection when no assignment or default matches; it never passes caller credentials through to the destination.",
 		Attributes: map[string]schema.Attribute{
 			"id":                   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"resource_id":          schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Resource that uses this credential."},
