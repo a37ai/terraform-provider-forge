@@ -12,6 +12,10 @@ Resource. Forge keeps stored credential material server-side; clients and
 managed devices never receive it. The Resource must be assigned to a Resource
 Gateway before the credential can be used for routed traffic.
 
+Assignments select a credential in service account, user, group, then default
+order. If no assignment or default matches, Forge rejects the connection. It
+does not pass caller credentials through to the destination.
+
 Terraform 1.11 or newer is required. `secret` is write-only and sensitive, so
 Terraform does not store its planned or state value. Supply it through a
 sensitive ephemeral variable to keep the value out of saved plan configuration
