@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ func TestTerraformCLIResourceCredentialLifecycle(t *testing.T) {
 	if terraform == "" {
 		t.Skip("set FORGE_TERRAFORM_CLI to a Terraform 1.11+ executable")
 	}
+	requireTerraformEphemeralVariables(t, terraform)
 
 	var mu sync.Mutex
 	resourceExists, credentialExists := false, false
@@ -109,6 +111,7 @@ func TestTerraformCLIResourceCredentialLifecycle(t *testing.T) {
   required_version = ">= 1.11.0"
   required_providers { forge = { source = "a37ai/forge" } }
 }
+
 variable "database_password" {
   type = string
   sensitive = true
@@ -169,6 +172,27 @@ resource "forge_resource_credential" "database" {
 	assertTerraformStateOmits(t, terraform, work, env, "first-super-secret", "second-super-secret", "secretId", "secretRef")
 	if output := runAcceptanceCommand(t, terraform, []string{"plan", "-detailed-exitcode", "-input=false", "-no-color"}, work, env); !strings.Contains(output, "No changes") {
 		t.Fatalf("imported credential did not converge:\n%s", output)
+	}
+}
+
+func requireTerraformEphemeralVariables(t *testing.T, terraform string) {
+	t.Helper()
+	output, err := exec.Command(terraform, "version", "-json").Output()
+	if err != nil {
+		t.Fatalf("read Terraform version: %v", err)
+	}
+	var version struct {
+		TerraformVersion string `json:"terraform_version"`
+	}
+	if err := json.Unmarshal(output, &version); err != nil {
+		t.Fatalf("decode Terraform version: %v", err)
+	}
+	var major, minor int
+	if _, err := fmt.Sscanf(version.TerraformVersion, "%d.%d", &major, &minor); err != nil {
+		t.Fatalf("parse Terraform version %q: %v", version.TerraformVersion, err)
+	}
+	if major < 1 || major == 1 && minor < 11 {
+		t.Skipf("Terraform %s does not support ephemeral variables", version.TerraformVersion)
 	}
 }
 
