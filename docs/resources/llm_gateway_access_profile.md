@@ -25,8 +25,12 @@ A Forge LLM Gateway access profile and its atomic provider route plan. This is t
 - `data_classes` (Set of String)
 - `description` (String)
 - `enforcement_mode` (String) Policy behavior: monitor records decisions, simulate returns simulated outcomes, enforce changes traffic, and break_glass bypasses enforcement while retaining audit evidence.
+- `fallback_rule` (Block List) Ordered existing destination routes for one provider failure reason. Forge policy and profile budget denials remain terminal. (see [below for nested schema](#nestedblock--fallback_rule))
 - `model_patterns` (Set of String) Requested model names or glob patterns allowed by this profile, such as gpt-5 or claude-\*.
 - `policy_hooks` (Set of String) Gateway stages evaluated for this profile: prompt, pre_tool_use, and post_tool_use.
+- `prompt_cache` (Block) Provider prompt cache and optional session affinity. (see [below for nested schema](#nestedblock--prompt_cache))
+- `response_cache` (Block) Exact response cache for eligible stateless text requests. (see [below for nested schema](#nestedblock--response_cache))
+- `web_search` (Block) Intercept eligible model web searches with Tavily. (see [below for nested schema](#nestedblock--web_search))
 - `route` (Block List) (see [below for nested schema](#nestedblock--route))
 - `state` (String) Lifecycle state: draft, active, disabled, or archived.
 
@@ -37,6 +41,43 @@ A Forge LLM Gateway access profile and its atomic provider route plan. This is t
 - `manager_instance` (String)
 - `validation_token` (String, Sensitive) Short-lived signed plan binding managed internally by the provider.
 - `version` (Number)
+
+<a id="nestedblock--fallback_rule"></a>
+
+### Nested Schema for `fallback_rule`
+
+Required:
+
+- `reason` (String) One of `provider_context_limit`, `provider_content_policy`, or `model_budget_exhausted`.
+- `route_ids` (List of String) Existing route IDs in failover order.
+
+<a id="nestedblock--prompt_cache"></a>
+
+### Nested Schema for `prompt_cache`
+
+Optional:
+
+- `enabled` (Boolean) Set when configuring this block.
+- `injection_points` (Set of String) `system` and `last_user` for supported provider text blocks.
+- `affinity_enabled` (Boolean) Keep a session on the same eligible weighted destination when available.
+
+<a id="nestedblock--response_cache"></a>
+
+### Nested Schema for `response_cache`
+
+Optional:
+
+- `enabled` (Boolean) Set when configuring this block.
+- `ttl_seconds` (Number) Expiry from 60 to 3600 seconds.
+
+<a id="nestedblock--web_search"></a>
+
+### Nested Schema for `web_search`
+
+Optional:
+
+- `enabled` (Boolean) Set when configuring this block.
+- `credential_secret_ref` (String, Sensitive) Required when web search is enabled. Forge secret reference for the Tavily API key, such as `forge-secret:<id>`.
 
 <a id="nestedblock--route"></a>
 

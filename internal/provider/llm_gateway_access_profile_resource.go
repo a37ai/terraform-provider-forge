@@ -29,21 +29,25 @@ import (
 type llmGatewayAccessProfileResource struct{ client *Client }
 
 type llmGatewayAccessProfileModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	Description     types.String `tfsdk:"description"`
-	State           types.String `tfsdk:"state"`
-	EnforcementMode types.String `tfsdk:"enforcement_mode"`
-	ModelPatterns   types.Set    `tfsdk:"model_patterns"`
-	DataClasses     types.Set    `tfsdk:"data_classes"`
-	PolicyHooks     types.Set    `tfsdk:"policy_hooks"`
-	Routes          types.List   `tfsdk:"route"`
-	Version         types.Int64  `tfsdk:"version"`
-	AdoptExisting   types.Bool   `tfsdk:"adopt_existing"`
-	ManagementMode  types.String `tfsdk:"management_mode"`
-	ManagerID       types.String `tfsdk:"manager_id"`
-	ManagerInstance types.String `tfsdk:"manager_instance"`
-	ValidationToken types.String `tfsdk:"validation_token"`
+	ID              types.String                      `tfsdk:"id"`
+	Name            types.String                      `tfsdk:"name"`
+	Description     types.String                      `tfsdk:"description"`
+	State           types.String                      `tfsdk:"state"`
+	EnforcementMode types.String                      `tfsdk:"enforcement_mode"`
+	ModelPatterns   types.Set                         `tfsdk:"model_patterns"`
+	DataClasses     types.Set                         `tfsdk:"data_classes"`
+	PolicyHooks     types.Set                         `tfsdk:"policy_hooks"`
+	Routes          types.List                        `tfsdk:"route"`
+	FallbackRules   types.List                        `tfsdk:"fallback_rule"`
+	PromptCache     *llmGatewayPromptCachePlanModel   `tfsdk:"prompt_cache"`
+	ResponseCache   *llmGatewayResponseCachePlanModel `tfsdk:"response_cache"`
+	WebSearch       *llmGatewayWebSearchPlanModel     `tfsdk:"web_search"`
+	Version         types.Int64                       `tfsdk:"version"`
+	AdoptExisting   types.Bool                        `tfsdk:"adopt_existing"`
+	ManagementMode  types.String                      `tfsdk:"management_mode"`
+	ManagerID       types.String                      `tfsdk:"manager_id"`
+	ManagerInstance types.String                      `tfsdk:"manager_instance"`
+	ValidationToken types.String                      `tfsdk:"validation_token"`
 }
 
 type llmGatewayRoutePlanModel struct {
@@ -61,6 +65,27 @@ type llmGatewayRoutePlanModel struct {
 	PolicyHooks           types.Set    `tfsdk:"policy_hooks"`
 	ToolDenyBehavior      types.String `tfsdk:"tool_deny_behavior"`
 	ConfigJSON            types.String `tfsdk:"config_json"`
+}
+
+type llmGatewayFallbackRulePlanModel struct {
+	Reason   types.String `tfsdk:"reason"`
+	RouteIDs types.List   `tfsdk:"route_ids"`
+}
+
+type llmGatewayPromptCachePlanModel struct {
+	Enabled         types.Bool `tfsdk:"enabled"`
+	InjectionPoints types.Set  `tfsdk:"injection_points"`
+	AffinityEnabled types.Bool `tfsdk:"affinity_enabled"`
+}
+
+type llmGatewayResponseCachePlanModel struct {
+	Enabled    types.Bool  `tfsdk:"enabled"`
+	TTLSeconds types.Int64 `tfsdk:"ttl_seconds"`
+}
+
+type llmGatewayWebSearchPlanModel struct {
+	Enabled             types.Bool   `tfsdk:"enabled"`
+	CredentialSecretRef types.String `tfsdk:"credential_secret_ref"`
 }
 
 type llmGatewaySummary struct {
@@ -93,12 +118,31 @@ type llmGatewayAccessProfileAPI struct {
 	State           string          `json:"state"`
 	EnforcementMode string          `json:"enforcementMode"`
 	ModelSelectors  json.RawMessage `json:"modelSelectors"`
-	DataClasses     []string        `json:"dataClasses"`
-	PolicyHooks     []string        `json:"policyHooks"`
-	Version         int64           `json:"version"`
-	ManagementMode  string          `json:"managementMode"`
-	ManagerID       *string         `json:"managerId"`
-	ManagerInstance *string         `json:"managerInstance"`
+	FailoverRules   []struct {
+		Reason   string   `json:"reason"`
+		RouteIDs []string `json:"routeIds"`
+	} `json:"failoverRules"`
+	CacheSettings struct {
+		PromptCache struct {
+			Enabled         bool     `json:"enabled"`
+			InjectionPoints []string `json:"injectionPoints"`
+			AffinityEnabled bool     `json:"affinityEnabled"`
+		} `json:"promptCache"`
+		ResponseCache struct {
+			Enabled    bool  `json:"enabled"`
+			TTLSeconds int64 `json:"ttlSeconds"`
+		} `json:"responseCache"`
+	} `json:"cacheSettings"`
+	WebSearchSettings struct {
+		Enabled             bool   `json:"enabled"`
+		CredentialSecretRef string `json:"credentialSecretRef"`
+	} `json:"webSearchSettings"`
+	DataClasses     []string `json:"dataClasses"`
+	PolicyHooks     []string `json:"policyHooks"`
+	Version         int64    `json:"version"`
+	ManagementMode  string   `json:"managementMode"`
+	ManagerID       *string  `json:"managerId"`
+	ManagerInstance *string  `json:"managerInstance"`
 }
 type llmGatewayRouteAPI struct {
 	ID                    string          `json:"id"`
@@ -145,6 +189,23 @@ func (r *llmGatewayAccessProfileResource) Schema(_ context.Context, _ resource.S
 		"management_mode": schema.StringAttribute{Computed: true}, "manager_id": schema.StringAttribute{Computed: true}, "manager_instance": schema.StringAttribute{Computed: true},
 		"validation_token": schema.StringAttribute{Computed: true, Sensitive: true, Description: "Short-lived signed plan binding managed internally by the provider."},
 	}, Blocks: map[string]schema.Block{
+		"prompt_cache": schema.SingleNestedBlock{Description: "Provider prompt caching for eligible stable text blocks.", Attributes: map[string]schema.Attribute{
+			"enabled":          schema.BoolAttribute{Optional: true},
+			"injection_points": schema.SetAttribute{Optional: true, ElementType: types.StringType, Validators: []validator.Set{setvalidator.ValueStringsAre(stringvalidator.OneOf("system", "last_user"))}},
+			"affinity_enabled": schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false)},
+		}},
+		"response_cache": schema.SingleNestedBlock{Description: "Exact response caching for eligible stateless text requests.", Attributes: map[string]schema.Attribute{
+			"enabled":     schema.BoolAttribute{Optional: true},
+			"ttl_seconds": schema.Int64Attribute{Optional: true, Validators: []validator.Int64{int64validator.Between(60, 3600)}},
+		}},
+		"web_search": schema.SingleNestedBlock{Description: "Intercept eligible model web searches using Tavily.", Attributes: map[string]schema.Attribute{
+			"enabled":               schema.BoolAttribute{Optional: true},
+			"credential_secret_ref": schema.StringAttribute{Optional: true, Sensitive: true, Description: "Forge secret reference for the Tavily API key."},
+		}},
+		"fallback_rule": schema.ListNestedBlock{Description: "Ordered fallback destinations for one provider failure reason. Forge policy and profile budget denials remain terminal.", Validators: []validator.List{listvalidator.SizeAtMost(3)}, NestedObject: schema.NestedBlockObject{Attributes: map[string]schema.Attribute{
+			"reason":    schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf("provider_context_limit", "provider_content_policy", "model_budget_exhausted")}},
+			"route_ids": schema.ListAttribute{Required: true, ElementType: types.StringType, Validators: []validator.List{listvalidator.SizeAtLeast(1)}},
+		}}},
 		"route": schema.ListNestedBlock{Validators: []validator.List{listvalidator.SizeAtLeast(1)}, NestedObject: schema.NestedBlockObject{Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}}, "provider": schema.StringAttribute{Required: true, Description: "Exact provider name configured in Forge. Forge resolves the name to its canonical internal ID and rejects missing or ambiguous matches."}, "name": schema.StringAttribute{Required: true},
 			"requested_model_pattern": schema.StringAttribute{Required: true}, "upstream_model": schema.StringAttribute{Optional: true},
@@ -162,6 +223,29 @@ func (r *llmGatewayAccessProfileResource) Schema(_ context.Context, _ resource.S
 			"config_json": schema.StringAttribute{Optional: true, Description: "JSON object passed to the native gateway route config."},
 		}}},
 	}}
+}
+func (r *llmGatewayAccessProfileResource) ValidateConfig(ctx context.Context, q resource.ValidateConfigRequest, p *resource.ValidateConfigResponse) {
+	var model llmGatewayAccessProfileModel
+	p.Diagnostics.Append(q.Config.Get(ctx, &model)...)
+	if p.Diagnostics.HasError() {
+		return
+	}
+	if model.PromptCache != nil && model.PromptCache.Enabled.IsNull() {
+		p.Diagnostics.AddAttributeError(path.Root("prompt_cache").AtName("enabled"), "Missing cache setting", "Set enabled when configuring prompt_cache.")
+	}
+	if model.ResponseCache != nil && model.ResponseCache.Enabled.IsNull() {
+		p.Diagnostics.AddAttributeError(path.Root("response_cache").AtName("enabled"), "Missing cache setting", "Set enabled when configuring response_cache.")
+	}
+	if model.WebSearch != nil {
+		if model.WebSearch.Enabled.IsNull() {
+			p.Diagnostics.AddAttributeError(path.Root("web_search").AtName("enabled"), "Missing web search setting", "Set enabled when configuring web_search.")
+		}
+		if !model.WebSearch.Enabled.IsUnknown() && model.WebSearch.Enabled.ValueBool() &&
+			!model.WebSearch.CredentialSecretRef.IsUnknown() &&
+			strings.TrimSpace(model.WebSearch.CredentialSecretRef.ValueString()) == "" {
+			p.Diagnostics.AddAttributeError(path.Root("web_search").AtName("credential_secret_ref"), "Missing Tavily credential", "Set credential_secret_ref when web_search is enabled.")
+		}
+	}
 }
 func (r *llmGatewayAccessProfileResource) Configure(_ context.Context, q resource.ConfigureRequest, p *resource.ConfigureResponse) {
 	if q.ProviderData == nil {
@@ -353,6 +437,34 @@ func (r *llmGatewayAccessProfileResource) payload(ctx context.Context, model llm
 		routes = append(routes, item)
 	}
 	profile := map[string]any{"id": model.ID.ValueString(), "name": model.Name.ValueString(), "modelSelectors": selectors, "dataClasses": dataClasses, "policyHooks": hooks}
+	var fallbackRules []llmGatewayFallbackRulePlanModel
+	if !model.FallbackRules.IsNull() && !model.FallbackRules.IsUnknown() {
+		diagnostics.Append(model.FallbackRules.ElementsAs(ctx, &fallbackRules, false)...)
+	}
+	profileRules := make([]map[string]any, 0, len(fallbackRules))
+	for _, rule := range fallbackRules {
+		var routeIDs []string
+		diagnostics.Append(rule.RouteIDs.ElementsAs(ctx, &routeIDs, false)...)
+		profileRules = append(profileRules, map[string]any{"reason": rule.Reason.ValueString(), "routeIds": routeIDs})
+	}
+	profile["failoverRules"] = profileRules
+	cacheSettings := map[string]any{}
+	if model.PromptCache != nil {
+		points := []string{}
+		if !model.PromptCache.InjectionPoints.IsNull() && !model.PromptCache.InjectionPoints.IsUnknown() {
+			diagnostics.Append(model.PromptCache.InjectionPoints.ElementsAs(ctx, &points, false)...)
+		}
+		cacheSettings["promptCache"] = map[string]any{"enabled": model.PromptCache.Enabled.ValueBool(), "injectionPoints": points, "affinityEnabled": model.PromptCache.AffinityEnabled.ValueBool()}
+	}
+	if model.ResponseCache != nil {
+		cacheSettings["responseCache"] = map[string]any{"enabled": model.ResponseCache.Enabled.ValueBool(), "ttlSeconds": model.ResponseCache.TTLSeconds.ValueInt64()}
+	}
+	profile["cacheSettings"] = cacheSettings
+	webSearchSettings := map[string]any{}
+	if model.WebSearch != nil && model.WebSearch.Enabled.ValueBool() {
+		webSearchSettings = map[string]any{"enabled": true, "provider": "tavily", "credentialSecretRef": model.WebSearch.CredentialSecretRef.ValueString()}
+	}
+	profile["webSearchSettings"] = webSearchSettings
 	for key, value := range map[string]types.String{"description": model.Description, "state": model.State, "enforcementMode": model.EnforcementMode} {
 		if !value.IsNull() && !value.IsUnknown() && value.ValueString() != "" {
 			profile[key] = value.ValueString()
@@ -411,6 +523,33 @@ func (r *llmGatewayAccessProfileResource) refreshModel(ctx context.Context, mode
 	model.ManagerID = types.StringPointerValue(profile.ManagerID)
 	model.ManagerInstance = types.StringPointerValue(profile.ManagerInstance)
 	model.DataClasses, model.PolicyHooks = setStringState(ctx, profile.DataClasses, diagnostics), setStringState(ctx, profile.PolicyHooks, diagnostics)
+	fallbackRules := make([]llmGatewayFallbackRulePlanModel, 0, len(profile.FailoverRules))
+	for _, rule := range profile.FailoverRules {
+		fallbackRules = append(fallbackRules, llmGatewayFallbackRulePlanModel{Reason: types.StringValue(rule.Reason), RouteIDs: listStringState(ctx, rule.RouteIDs, diagnostics)})
+	}
+	if len(fallbackRules) == 0 && model.FallbackRules.IsNull() {
+		model.FallbackRules = types.ListNull(fallbackRuleObjectType())
+	} else {
+		value, ds := types.ListValueFrom(ctx, fallbackRuleObjectType(), fallbackRules)
+		diagnostics.Append(ds...)
+		model.FallbackRules = value
+	}
+	if profile.CacheSettings.PromptCache.Enabled || len(profile.CacheSettings.PromptCache.InjectionPoints) > 0 || profile.CacheSettings.PromptCache.AffinityEnabled || model.PromptCache != nil {
+		model.PromptCache = &llmGatewayPromptCachePlanModel{
+			Enabled:         types.BoolValue(profile.CacheSettings.PromptCache.Enabled),
+			InjectionPoints: setStringState(ctx, profile.CacheSettings.PromptCache.InjectionPoints, diagnostics),
+			AffinityEnabled: types.BoolValue(profile.CacheSettings.PromptCache.AffinityEnabled),
+		}
+	}
+	if profile.CacheSettings.ResponseCache.Enabled || profile.CacheSettings.ResponseCache.TTLSeconds > 0 || model.ResponseCache != nil {
+		model.ResponseCache = &llmGatewayResponseCachePlanModel{
+			Enabled:    types.BoolValue(profile.CacheSettings.ResponseCache.Enabled),
+			TTLSeconds: types.Int64Value(profile.CacheSettings.ResponseCache.TTLSeconds),
+		}
+	}
+	if profile.WebSearchSettings.Enabled || model.WebSearch != nil {
+		model.WebSearch = &llmGatewayWebSearchPlanModel{Enabled: types.BoolValue(profile.WebSearchSettings.Enabled), CredentialSecretRef: types.StringValue(profile.WebSearchSettings.CredentialSecretRef)}
+	}
 	var priorRoutes []llmGatewayRoutePlanModel
 	if !model.Routes.IsNull() && !model.Routes.IsUnknown() {
 		diagnostics.Append(model.Routes.ElementsAs(ctx, &priorRoutes, false)...)
@@ -460,6 +599,10 @@ func sameGatewayRoute(prior llmGatewayRoutePlanModel, current llmGatewayRouteAPI
 }
 func routeObjectType() types.ObjectType {
 	return types.ObjectType{AttrTypes: map[string]attr.Type{"id": types.StringType, "provider": types.StringType, "name": types.StringType, "requested_model_pattern": types.StringType, "upstream_model": types.StringType, "api_surface": types.StringType, "strategy": types.StringType, "route_priority": types.Int64Type, "traffic_percentage": types.Int64Type, "rollout_state": types.StringType, "enforcement_mode": types.StringType, "policy_hooks": types.SetType{ElemType: types.StringType}, "tool_deny_behavior": types.StringType, "config_json": types.StringType}}
+}
+
+func fallbackRuleObjectType() types.ObjectType {
+	return types.ObjectType{AttrTypes: map[string]attr.Type{"reason": types.StringType, "route_ids": types.ListType{ElemType: types.StringType}}}
 }
 
 func optionalJSONObjectState(value, empty string) types.String {
