@@ -128,7 +128,7 @@ var canonicalAccessFieldValueOptions = map[string][]string{"account.access_state
 	"browser.account_state":        {"company_account", "personal_account", "service_account", "account_unknown", "cannot_prove_account"},
 	"browser.account_truth_state":  {"metadata_observed", "unknown", "stale", "hinted", "inferred", "proven"},
 	"classification.state":         {"known_ai", "candidate_ai", "known_not_ai", "uncertain", "no_catalog_match"},
-	"destination.protocol":         {"tcp", "udp"},
+	"destination.protocol":         {"tcp", "udp", "https_visible_sni"},
 	"local_model.governance_state": {"approved", "unknown", "disallowed"},
 	"local_model.proof_level":      {"request-declared", "running", "available", "unknown"},
 	"route.posture":                {"managed_route", "delegated_control_route", "unmanaged_direct_route", "approved_asset_control_gap", "unknown_route", "risky_route", "denied_route", "exception_route"},

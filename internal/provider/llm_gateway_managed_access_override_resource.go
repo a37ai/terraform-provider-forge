@@ -18,22 +18,24 @@ import (
 
 type llmGatewayManagedAccessOverrideResource struct{ client *Client }
 type llmGatewayManagedAccessOverrideModel struct {
-	ID              types.String  `tfsdk:"id"`
-	TargetKind      types.String  `tfsdk:"target_kind"`
-	TargetID        types.String  `tfsdk:"target_id"`
-	AccessProfileID types.String  `tfsdk:"access_profile_id"`
-	BudgetWindow    types.String  `tfsdk:"budget_window"`
-	AmountUSD       types.Float64 `tfsdk:"amount_usd"`
-	TotalTokenLimit types.Int64   `tfsdk:"total_token_limit"`
+	ID                    types.String  `tfsdk:"id"`
+	TargetKind            types.String  `tfsdk:"target_kind"`
+	TargetID              types.String  `tfsdk:"target_id"`
+	AccessProfileID       types.String  `tfsdk:"access_profile_id"`
+	BudgetWindow          types.String  `tfsdk:"budget_window"`
+	AmountUSD             types.Float64 `tfsdk:"amount_usd"`
+	TotalTokenLimit       types.Int64   `tfsdk:"total_token_limit"`
+	AlertThresholdPercent types.Int64   `tfsdk:"alert_threshold_percent"`
 }
 type managedAccessOverrideAPI struct {
 	TargetKind      string `json:"targetKind"`
 	TargetID        string `json:"targetId"`
 	AccessProfileID string `json:"accessProfileId"`
 	Budget          struct {
-		BudgetWindow    string   `json:"budgetWindow"`
-		AmountUSD       *float64 `json:"amountUsd"`
-		TotalTokenLimit *int64   `json:"totalTokenLimit"`
+		BudgetWindow          string   `json:"budgetWindow"`
+		AmountUSD             *float64 `json:"amountUsd"`
+		TotalTokenLimit       *int64   `json:"totalTokenLimit"`
+		AlertThresholdPercent *int64   `json:"alertThresholdPercent"`
 	} `json:"budget"`
 }
 type managedAccessStatusAPI struct {
@@ -53,6 +55,7 @@ func (r *llmGatewayManagedAccessOverrideResource) Schema(_ context.Context, _ re
 		"target_id":         schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 		"access_profile_id": schema.StringAttribute{Required: true}, "budget_window": schema.StringAttribute{Required: true},
 		"amount_usd": schema.Float64Attribute{Optional: true}, "total_token_limit": schema.Int64Attribute{Optional: true},
+		"alert_threshold_percent": schema.Int64Attribute{Optional: true, Description: "Notify administrators when usage reaches this percentage of the hard limit (1–99)."},
 	}}
 }
 func (r *llmGatewayManagedAccessOverrideResource) Configure(_ context.Context, q resource.ConfigureRequest, _ *resource.ConfigureResponse) {
@@ -86,6 +89,14 @@ func (r *llmGatewayManagedAccessOverrideResource) save(ctx context.Context, m *l
 	}
 	if !m.TotalTokenLimit.IsNull() {
 		budget["totalTokenLimit"] = m.TotalTokenLimit.ValueInt64()
+	}
+	if !m.AlertThresholdPercent.IsNull() {
+		value := m.AlertThresholdPercent.ValueInt64()
+		if value < 1 || value > 99 {
+			d.AddError("Invalid budget alert threshold", "alert_threshold_percent must be from 1 to 99")
+			return
+		}
+		budget["alertThresholdPercent"] = value
 	}
 	body := map[string]any{"accessProfileId": m.AccessProfileID.ValueString(), "budget": budget}
 	path := "llm-gateway/managed-developer/overrides/" + url.PathEscape(m.TargetKind.ValueString()) + "/" + url.PathEscape(m.TargetID.ValueString())
@@ -135,6 +146,7 @@ func (r *llmGatewayManagedAccessOverrideResource) refresh(m *llmGatewayManagedAc
 	m.BudgetWindow = types.StringValue(o.Budget.BudgetWindow)
 	m.AmountUSD = types.Float64PointerValue(o.Budget.AmountUSD)
 	m.TotalTokenLimit = types.Int64PointerValue(o.Budget.TotalTokenLimit)
+	m.AlertThresholdPercent = types.Int64PointerValue(o.Budget.AlertThresholdPercent)
 }
 
 var _ resource.ResourceWithConfigure = (*llmGatewayManagedAccessOverrideResource)(nil)
