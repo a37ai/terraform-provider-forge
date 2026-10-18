@@ -24,7 +24,6 @@ A Forge LLM Gateway access profile and its atomic provider route plan. This is t
 - `adopt_existing` (Boolean) Explicitly claim an existing Forge-managed profile at its current version. New profiles do not need this.
 - `data_classes` (Set of String)
 - `description` (String)
-- `enforcement_mode` (String) Policy behavior: monitor records decisions, simulate returns simulated outcomes, enforce changes traffic, and break_glass bypasses enforcement while retaining audit evidence.
 - `fallback_rule` (Block List) Ordered existing destination routes for one provider failure reason. Forge policy and profile budget denials remain terminal. (see [below for nested schema](#nestedblock--fallback_rule))
 - `model_patterns` (Set of String) Requested model names or glob patterns allowed by this profile, such as gpt-5 or claude-\*.
 - `policy_hooks` (Set of String) Gateway stages evaluated for this profile: prompt, pre_tool_use, and post_tool_use.
@@ -93,12 +92,16 @@ Required:
 Optional:
 
 - `config_json` (String) JSON object passed to the native gateway route config.
-- `enforcement_mode` (String) Route policy behavior: monitor, simulate, enforce, or break_glass.
 - `id` (String)
 - `policy_hooks` (Set of String) Gateway stages evaluated on this route: prompt, pre_tool_use, and post_tool_use.
-- `rollout_state` (String) Route rollout state: draft, monitor, simulate, enforce, paused, or archived.
 - `route_priority` (Number)
 - `strategy` (String) Selection strategy within this priority tier: fixed, weighted, policy, cost, or latency. Configure later priority tiers for fallback.
 - `tool_deny_behavior` (String) Denied tool behavior: hard_block rejects the request; rewrite_refusal returns a refusal-shaped result.
 - `traffic_percentage` (Number) Traffic percentage for this route within its priority tier.
 - `upstream_model` (String)
+
+`routing_key` is an optional immutable, organization-unique selector for
+`X-Forge-Gateway-Profile`. Forge assigns a key if it is omitted. Requests can
+also select the canonical access profile ID. Profile selection applies that
+profile's model/provider restrictions and policies without merging them with
+other eligible profiles.
