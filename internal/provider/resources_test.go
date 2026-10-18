@@ -366,13 +366,13 @@ func TestLLMGatewayTerraformResourceUsesCanonicalAccessProfileRoutePlan(t *testi
 	routes, diagnostics := types.ListValueFrom(context.Background(), routeObjectType(), []llmGatewayRoutePlanModel{{
 		ID: types.StringValue("route.primary"), Provider: types.StringValue("OpenAI"), Name: types.StringValue("Primary"),
 		RequestedModelPattern: types.StringValue("gpt-*"), UpstreamModel: types.StringValue("gpt-5"), APISurface: types.StringValue("openai_responses"),
-		Strategy: types.StringValue("fixed"), RoutePriority: types.Int64Value(1), TrafficPercentage: types.Int64Value(100), RolloutState: types.StringValue("enforce"),
-		EnforcementMode: types.StringValue("enforce"), PolicyHooks: stringSet("prompt", "pre_tool_use"), ToolDenyBehavior: types.StringValue("hard_block"), ConfigJSON: types.StringValue(`{"timeoutSeconds":30}`),
+		Strategy: types.StringValue("fixed"), RoutePriority: types.Int64Value(1), TrafficPercentage: types.Int64Value(100),
+		PolicyHooks: stringSet("prompt", "pre_tool_use"), ToolDenyBehavior: types.StringValue("hard_block"), ConfigJSON: types.StringValue(`{"timeoutSeconds":30}`),
 	}})
 	if diagnostics.HasError() {
 		t.Fatalf("route model diagnostics=%v", diagnostics)
 	}
-	model := llmGatewayAccessProfileModel{ID: types.StringValue("profile.engineering"), Name: types.StringValue("Engineering"), Description: types.StringValue("Engineering gateway access"), State: types.StringValue("active"), EnforcementMode: types.StringValue("enforce"), ModelPatterns: stringSet("gpt-5"), DataClasses: stringSet("internal"), PolicyHooks: stringSet("prompt"), Routes: routes}
+	model := llmGatewayAccessProfileModel{ID: types.StringValue("profile.engineering"), Name: types.StringValue("Engineering"), Description: types.StringValue("Engineering gateway access"), State: types.StringValue("active"), ModelPatterns: stringSet("gpt-5"), DataClasses: stringSet("internal"), PolicyHooks: stringSet("prompt"), Routes: routes}
 	var d diag.Diagnostics
 	body := (&llmGatewayAccessProfileResource{}).payload(context.Background(), model, providers, &d)
 	if d.HasError() {
@@ -423,7 +423,7 @@ func TestLLMGatewayRefreshPreservesOmittedSelectorsAndExactRouteConfig(t *testin
 		t.Fatalf("route model diagnostics=%v", diagnostics)
 	}
 	model := llmGatewayAccessProfileModel{Routes: priorRoutes}
-	profile := llmGatewayAccessProfileAPI{ID: "profile", Name: "Profile", State: "active", EnforcementMode: "enforce", ModelSelectors: json.RawMessage("{}")}
+	profile := llmGatewayAccessProfileAPI{ID: "profile", Name: "Profile", State: "active", ModelSelectors: json.RawMessage("{}")}
 	routes := []llmGatewayRouteAPI{
 		{ID: "route.primary", ProviderID: "provider", Name: "Primary", RequestedModelPattern: "gpt-*", UpstreamModel: "gpt-5", APISurface: "openai_responses", Config: json.RawMessage("{}")},
 		{ID: "route.secondary", ProviderID: "provider", Name: "Secondary", RequestedModelPattern: "gpt-4*", UpstreamModel: "gpt-4.1", APISurface: "openai_responses", Config: json.RawMessage("{}")},

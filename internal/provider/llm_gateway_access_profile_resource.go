@@ -29,11 +29,11 @@ import (
 type llmGatewayAccessProfileResource struct{ client *Client }
 
 type llmGatewayAccessProfileModel struct {
+	RoutingKey      types.String                      `tfsdk:"routing_key"`
 	ID              types.String                      `tfsdk:"id"`
 	Name            types.String                      `tfsdk:"name"`
 	Description     types.String                      `tfsdk:"description"`
 	State           types.String                      `tfsdk:"state"`
-	EnforcementMode types.String                      `tfsdk:"enforcement_mode"`
 	ModelPatterns   types.Set                         `tfsdk:"model_patterns"`
 	DataClasses     types.Set                         `tfsdk:"data_classes"`
 	PolicyHooks     types.Set                         `tfsdk:"policy_hooks"`
@@ -60,8 +60,6 @@ type llmGatewayRoutePlanModel struct {
 	Strategy              types.String `tfsdk:"strategy"`
 	RoutePriority         types.Int64  `tfsdk:"route_priority"`
 	TrafficPercentage     types.Int64  `tfsdk:"traffic_percentage"`
-	RolloutState          types.String `tfsdk:"rollout_state"`
-	EnforcementMode       types.String `tfsdk:"enforcement_mode"`
 	PolicyHooks           types.Set    `tfsdk:"policy_hooks"`
 	ToolDenyBehavior      types.String `tfsdk:"tool_deny_behavior"`
 	ConfigJSON            types.String `tfsdk:"config_json"`
@@ -112,13 +110,13 @@ type llmGatewayRoutePlanResponse struct {
 	Routes        []llmGatewayRouteAPI       `json:"routes"`
 }
 type llmGatewayAccessProfileAPI struct {
-	ID              string          `json:"id"`
-	Name            string          `json:"name"`
-	Description     string          `json:"description"`
-	State           string          `json:"state"`
-	EnforcementMode string          `json:"enforcementMode"`
-	ModelSelectors  json.RawMessage `json:"modelSelectors"`
-	FailoverRules   []struct {
+	RoutingKey     string          `json:"routingKey"`
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	State          string          `json:"state"`
+	ModelSelectors json.RawMessage `json:"modelSelectors"`
+	FailoverRules  []struct {
 		Reason   string   `json:"reason"`
 		RouteIDs []string `json:"routeIds"`
 	} `json:"failoverRules"`
@@ -153,8 +151,6 @@ type llmGatewayRouteAPI struct {
 	UpstreamModel         string          `json:"upstreamModel"`
 	APISurface            string          `json:"apiSurface"`
 	Strategy              string          `json:"strategy"`
-	RolloutState          string          `json:"rolloutState"`
-	EnforcementMode       string          `json:"enforcementMode"`
 	ToolDenyBehavior      string          `json:"toolDenyBehavior"`
 	RoutePriority         int64           `json:"routePriority"`
 	TrafficPercentage     int64           `json:"trafficPercentage"`
@@ -170,13 +166,13 @@ func (r *llmGatewayAccessProfileResource) Metadata(_ context.Context, q resource
 }
 func (r *llmGatewayAccessProfileResource) Schema(_ context.Context, _ resource.SchemaRequest, p *resource.SchemaResponse) {
 	hooks := func(description string) schema.SetAttribute {
-		return schema.SetAttribute{Optional: true, Description: description, ElementType: types.StringType, Validators: []validator.Set{setvalidator.ValueStringsAre(stringvalidator.OneOf("prompt", "pre_tool_use", "post_tool_use"))}}
+		return schema.SetAttribute{Optional: true, Computed: true, Description: description, ElementType: types.StringType, Validators: []validator.Set{setvalidator.ValueStringsAre(stringvalidator.OneOf("prompt", "pre_tool_use", "post_tool_use"))}}
 	}
 	p.Schema = schema.Schema{Description: "A Forge LLM Gateway access profile and its atomic provider route plan. This is the same durable object used by the staging gateway runtime and console.", Attributes: map[string]schema.Attribute{
-		"id":   schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-		"name": schema.StringAttribute{Required: true}, "description": schema.StringAttribute{Optional: true},
-		"state":            schema.StringAttribute{Optional: true, Computed: true, Description: "Lifecycle state: draft, active, disabled, or archived.", Validators: []validator.String{stringvalidator.OneOf("draft", "active", "disabled", "archived")}},
-		"enforcement_mode": schema.StringAttribute{Optional: true, Computed: true, Description: "Policy behavior: monitor records decisions, simulate returns simulated outcomes, enforce changes traffic, and break_glass bypasses enforcement while retaining audit evidence.", Validators: []validator.String{stringvalidator.OneOf("monitor", "simulate", "enforce", "break_glass")}},
+		"id":          schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+		"routing_key": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Immutable organization-unique routing key selected with X-Forge-Gateway-Profile."},
+		"name":        schema.StringAttribute{Required: true}, "description": schema.StringAttribute{Optional: true},
+		"state": schema.StringAttribute{Optional: true, Computed: true, Description: "Lifecycle state: draft, active, disabled, or archived.", Validators: []validator.String{stringvalidator.OneOf("draft", "active", "disabled", "archived")}},
 		"model_patterns": schema.SetAttribute{
 			Optional: true, Computed: true, ElementType: types.StringType,
 			Description: "Requested model names or glob patterns allowed by this profile, such as gpt-5 or claude-*.",
@@ -217,9 +213,7 @@ func (r *llmGatewayAccessProfileResource) Schema(_ context.Context, _ resource.S
 			)}},
 			"strategy":       schema.StringAttribute{Optional: true, Computed: true, Description: "Selection strategy within this priority tier: fixed, weighted, policy, cost, or latency. Configure later priority tiers for fallback.", Validators: []validator.String{stringvalidator.OneOf("fixed", "weighted", "policy", "cost", "latency")}},
 			"route_priority": schema.Int64Attribute{Optional: true, Computed: true, Validators: []validator.Int64{int64validator.AtLeast(1)}}, "traffic_percentage": schema.Int64Attribute{Optional: true, Computed: true, Description: "Traffic percentage for this route within its priority tier.", Validators: []validator.Int64{int64validator.Between(1, 100)}},
-			"rollout_state":    schema.StringAttribute{Optional: true, Computed: true, Description: "Route rollout state: draft, monitor, simulate, enforce, paused, or archived.", Validators: []validator.String{stringvalidator.OneOf("draft", "monitor", "simulate", "enforce", "paused", "archived")}},
-			"enforcement_mode": schema.StringAttribute{Optional: true, Computed: true, Description: "Route policy behavior: monitor, simulate, enforce, or break_glass.", Validators: []validator.String{stringvalidator.OneOf("monitor", "simulate", "enforce", "break_glass")}},
-			"policy_hooks":     hooks("Gateway stages evaluated on this route: prompt, pre_tool_use, and post_tool_use."), "tool_deny_behavior": schema.StringAttribute{Optional: true, Computed: true, Description: "Denied tool behavior: hard_block rejects the request; rewrite_refusal returns a refusal-shaped result.", Validators: []validator.String{stringvalidator.OneOf("hard_block", "rewrite_refusal")}},
+			"policy_hooks": hooks("Gateway stages evaluated on this route: prompt, pre_tool_use, and post_tool_use."), "tool_deny_behavior": schema.StringAttribute{Optional: true, Computed: true, Description: "Denied tool behavior: hard_block rejects the request; rewrite_refusal returns a refusal-shaped result.", Validators: []validator.String{stringvalidator.OneOf("hard_block", "rewrite_refusal")}},
 			"config_json": schema.StringAttribute{Optional: true, Description: "JSON object passed to the native gateway route config."},
 		}}},
 	}}
@@ -420,7 +414,7 @@ func (r *llmGatewayAccessProfileResource) payload(ctx context.Context, model llm
 			continue
 		}
 		item := map[string]any{"providerId": providerID, "name": route.Name.ValueString(), "requestedModelPattern": route.RequestedModelPattern.ValueString(), "apiSurface": route.APISurface.ValueString(), "config": config}
-		for key, value := range map[string]types.String{"id": route.ID, "upstreamModel": route.UpstreamModel, "strategy": route.Strategy, "rolloutState": route.RolloutState, "enforcementMode": route.EnforcementMode, "toolDenyBehavior": route.ToolDenyBehavior} {
+		for key, value := range map[string]types.String{"id": route.ID, "upstreamModel": route.UpstreamModel, "strategy": route.Strategy, "toolDenyBehavior": route.ToolDenyBehavior} {
 			if !value.IsNull() && !value.IsUnknown() && value.ValueString() != "" {
 				item[key] = value.ValueString()
 			}
@@ -436,7 +430,7 @@ func (r *llmGatewayAccessProfileResource) payload(ctx context.Context, model llm
 		}
 		routes = append(routes, item)
 	}
-	profile := map[string]any{"id": model.ID.ValueString(), "name": model.Name.ValueString(), "modelSelectors": selectors, "dataClasses": dataClasses, "policyHooks": hooks}
+	profile := map[string]any{"routingKey": model.RoutingKey.ValueString(), "id": model.ID.ValueString(), "name": model.Name.ValueString(), "modelSelectors": selectors, "dataClasses": dataClasses, "policyHooks": hooks}
 	var fallbackRules []llmGatewayFallbackRulePlanModel
 	if !model.FallbackRules.IsNull() && !model.FallbackRules.IsUnknown() {
 		diagnostics.Append(model.FallbackRules.ElementsAs(ctx, &fallbackRules, false)...)
@@ -465,7 +459,7 @@ func (r *llmGatewayAccessProfileResource) payload(ctx context.Context, model llm
 		webSearchSettings = map[string]any{"enabled": true, "provider": "tavily", "credentialSecretRef": model.WebSearch.CredentialSecretRef.ValueString()}
 	}
 	profile["webSearchSettings"] = webSearchSettings
-	for key, value := range map[string]types.String{"description": model.Description, "state": model.State, "enforcementMode": model.EnforcementMode} {
+	for key, value := range map[string]types.String{"description": model.Description, "state": model.State} {
 		if !value.IsNull() && !value.IsUnknown() && value.ValueString() != "" {
 			profile[key] = value.ValueString()
 		}
@@ -507,11 +501,12 @@ func (r *llmGatewayAccessProfileResource) Read(ctx context.Context, q resource.R
 }
 func (r *llmGatewayAccessProfileResource) refreshModel(ctx context.Context, model *llmGatewayAccessProfileModel, profile llmGatewayAccessProfileAPI, routes []llmGatewayRouteAPI, providers []llmGatewayProviderAPI, diagnostics *diag.Diagnostics) {
 	model.ID, model.Name = types.StringValue(profile.ID), types.StringValue(profile.Name)
+	model.RoutingKey = types.StringValue(profile.RoutingKey)
 	description := optionalString(profile.Description)
 	if profile.Description == "" && model.Description.IsNull() {
 		description = types.StringNull()
 	}
-	model.Description, model.State, model.EnforcementMode = description, types.StringValue(profile.State), types.StringValue(profile.EnforcementMode)
+	model.Description, model.State = description, types.StringValue(profile.State)
 	if typed, ok := modelPatternState(ctx, profile.ModelSelectors, diagnostics); ok {
 		model.ModelPatterns = typed
 	} else {
@@ -578,7 +573,7 @@ func (r *llmGatewayAccessProfileResource) refreshModel(ctx context.Context, mode
 				}
 			}
 		}
-		items = append(items, llmGatewayRoutePlanModel{ID: optionalString(route.ID), Provider: types.StringValue(providerName), Name: types.StringValue(route.Name), RequestedModelPattern: types.StringValue(route.RequestedModelPattern), UpstreamModel: optionalString(route.UpstreamModel), APISurface: types.StringValue(route.APISurface), Strategy: types.StringValue(route.Strategy), RoutePriority: types.Int64Value(route.RoutePriority), TrafficPercentage: types.Int64Value(route.TrafficPercentage), RolloutState: types.StringValue(route.RolloutState), EnforcementMode: types.StringValue(route.EnforcementMode), PolicyHooks: setStringState(ctx, route.PolicyHooks, diagnostics), ToolDenyBehavior: types.StringValue(route.ToolDenyBehavior), ConfigJSON: configState})
+		items = append(items, llmGatewayRoutePlanModel{ID: optionalString(route.ID), Provider: types.StringValue(providerName), Name: types.StringValue(route.Name), RequestedModelPattern: types.StringValue(route.RequestedModelPattern), UpstreamModel: optionalString(route.UpstreamModel), APISurface: types.StringValue(route.APISurface), Strategy: types.StringValue(route.Strategy), RoutePriority: types.Int64Value(route.RoutePriority), TrafficPercentage: types.Int64Value(route.TrafficPercentage), PolicyHooks: setStringState(ctx, route.PolicyHooks, diagnostics), ToolDenyBehavior: types.StringValue(route.ToolDenyBehavior), ConfigJSON: configState})
 	}
 	value, ds := types.ListValueFrom(ctx, routeObjectType(), items)
 	diagnostics.Append(ds...)
@@ -598,7 +593,7 @@ func sameGatewayRoute(prior llmGatewayRoutePlanModel, current llmGatewayRouteAPI
 		prior.APISurface.ValueString() == current.APISurface
 }
 func routeObjectType() types.ObjectType {
-	return types.ObjectType{AttrTypes: map[string]attr.Type{"id": types.StringType, "provider": types.StringType, "name": types.StringType, "requested_model_pattern": types.StringType, "upstream_model": types.StringType, "api_surface": types.StringType, "strategy": types.StringType, "route_priority": types.Int64Type, "traffic_percentage": types.Int64Type, "rollout_state": types.StringType, "enforcement_mode": types.StringType, "policy_hooks": types.SetType{ElemType: types.StringType}, "tool_deny_behavior": types.StringType, "config_json": types.StringType}}
+	return types.ObjectType{AttrTypes: map[string]attr.Type{"id": types.StringType, "provider": types.StringType, "name": types.StringType, "requested_model_pattern": types.StringType, "upstream_model": types.StringType, "api_surface": types.StringType, "strategy": types.StringType, "route_priority": types.Int64Type, "traffic_percentage": types.Int64Type, "policy_hooks": types.SetType{ElemType: types.StringType}, "tool_deny_behavior": types.StringType, "config_json": types.StringType}}
 }
 
 func fallbackRuleObjectType() types.ObjectType {

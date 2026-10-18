@@ -19,7 +19,18 @@ func TestLLMGatewayPolicyHooksRejectResponse(t *testing.T) {
 	route := schemaResponse.Schema.Blocks["route"].(schema.ListNestedBlock)
 	routeHooks := route.NestedObject.Attributes["policy_hooks"].(schema.SetAttribute)
 
+	for _, name := range []string{"enforcement_mode", "rollout_state"} {
+		if _, ok := schemaResponse.Schema.Attributes[name]; ok {
+			t.Errorf("profile exposes removed field %s", name)
+		}
+		if _, ok := route.NestedObject.Attributes[name]; ok {
+			t.Errorf("route exposes removed field %s", name)
+		}
+	}
 	for scope, hooks := range map[string]schema.SetAttribute{"profile": profileHooks, "route": routeHooks} {
+		if !hooks.Optional || !hooks.Computed {
+			t.Errorf("%s policy_hooks must accept server defaults", scope)
+		}
 		if strings.Contains(hooks.Description, "response") {
 			t.Errorf("%s policy_hooks description advertises unsupported response hook: %q", scope, hooks.Description)
 		}

@@ -102,7 +102,7 @@ func (r *resourceCredentialResource) Schema(_ context.Context, _ resource.Schema
 			"id":                   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"resource_id":          schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Resource that uses this credential."},
 			"name":                 schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.LengthBetween(1, 128)}},
-			"kind":                 schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf("username_password", "bearer_token", "header", "aws_rds_iam", "oauth2_client_credentials", "oauth2_token_exchange")}, Description: "Authentication method: username/password or RDS IAM for PostgreSQL and MySQL, username/password for Redis, and bearer token, header, OAuth client credentials, or OAuth token exchange for HTTP."},
+			"kind":                 schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf("username_password", "bearer_token", "header", "aws_rds_iam", "oauth2_client_credentials", "oauth2_token_exchange", "none")}, Description: "Authentication method: username/password or RDS IAM for PostgreSQL and MySQL, username/password for Redis, and bearer token, header, OAuth, or no upstream sign-in for HTTP. The no-auth kind still requires an identity assignment and Access policy."},
 			"username":             schema.StringAttribute{Optional: true, Validators: []validator.String{stringvalidator.LengthBetween(1, 256)}, Description: "Destination username for username_password or aws_rds_iam."},
 			"header_name":          schema.StringAttribute{Optional: true, Validators: []validator.String{stringvalidator.LengthBetween(1, 256)}, Description: "Destination header name for header credentials."},
 			"aws_region":           schema.StringAttribute{Optional: true, Validators: []validator.String{stringvalidator.LengthBetween(1, 32)}, Description: "AWS Region of the RDS or Aurora database. Uses the Resource Gateway's AWS identity."},
@@ -151,6 +151,10 @@ func (r *resourceCredentialResource) ValidateConfig(ctx context.Context, request
 	audienceSet := knownNonEmpty(model.OAuthAudience)
 	scopesSet := !model.OAuthScopes.IsNull() && !model.OAuthScopes.IsUnknown() && len(model.OAuthScopes.Elements()) > 0
 	switch model.Kind.ValueString() {
+	case "none":
+		if usernameSet || headerSet {
+			response.Diagnostics.AddAttributeError(path.Root("kind"), "Unexpected credential fields", "none credentials do not use username or header_name")
+		}
 	case "username_password":
 		if !usernameSet {
 			response.Diagnostics.AddAttributeError(path.Root("username"), "Missing username", "username is required for username_password credentials")

@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -18,6 +19,7 @@ import (
 
 type llmGatewayManagedAccessOverrideResource struct{ client *Client }
 type llmGatewayManagedAccessOverrideModel struct {
+	HostedDefault         types.Bool    `tfsdk:"hosted_default"`
 	ID                    types.String  `tfsdk:"id"`
 	TargetKind            types.String  `tfsdk:"target_kind"`
 	TargetID              types.String  `tfsdk:"target_id"`
@@ -28,6 +30,7 @@ type llmGatewayManagedAccessOverrideModel struct {
 	AlertThresholdPercent types.Int64   `tfsdk:"alert_threshold_percent"`
 }
 type managedAccessOverrideAPI struct {
+	HostedDefault   bool   `json:"hostedDefault"`
 	TargetKind      string `json:"targetKind"`
 	TargetID        string `json:"targetId"`
 	AccessProfileID string `json:"accessProfileId"`
@@ -53,7 +56,8 @@ func (r *llmGatewayManagedAccessOverrideResource) Schema(_ context.Context, _ re
 		"id":                schema.StringAttribute{Computed: true},
 		"target_kind":       schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf("user", "group", "service_account")}, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 		"target_id":         schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-		"access_profile_id": schema.StringAttribute{Required: true}, "budget_window": schema.StringAttribute{Required: true},
+		"hosted_default":    schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false)},
+		"access_profile_id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}}, "budget_window": schema.StringAttribute{Required: true},
 		"amount_usd": schema.Float64Attribute{Optional: true}, "total_token_limit": schema.Int64Attribute{Optional: true},
 		"alert_threshold_percent": schema.Int64Attribute{Optional: true, Description: "Notify administrators when usage reaches this percentage of the hard limit (1–99)."},
 	}}
@@ -98,7 +102,7 @@ func (r *llmGatewayManagedAccessOverrideResource) save(ctx context.Context, m *l
 		}
 		budget["alertThresholdPercent"] = value
 	}
-	body := map[string]any{"accessProfileId": m.AccessProfileID.ValueString(), "budget": budget}
+	body := map[string]any{"hostedDefault": m.HostedDefault.ValueBool(), "accessProfileId": m.AccessProfileID.ValueString(), "budget": budget}
 	path := "llm-gateway/managed-developer/overrides/" + url.PathEscape(m.TargetKind.ValueString()) + "/" + url.PathEscape(m.TargetID.ValueString())
 	var out managedAccessOverrideAPI
 	if err := r.client.Do(ctx, http.MethodPut, path, body, &out); err != nil {
@@ -119,7 +123,7 @@ func (r *llmGatewayManagedAccessOverrideResource) Read(ctx context.Context, q re
 		return
 	}
 	for _, o := range out.Overrides {
-		if o.TargetKind == m.TargetKind.ValueString() && o.TargetID == m.TargetID.ValueString() {
+		if o.TargetKind == m.TargetKind.ValueString() && o.TargetID == m.TargetID.ValueString() && o.AccessProfileID == m.AccessProfileID.ValueString() {
 			r.refresh(&m, o)
 			p.Diagnostics.Append(p.State.Set(ctx, &m)...)
 			return
@@ -134,15 +138,16 @@ func (r *llmGatewayManagedAccessOverrideResource) Delete(ctx context.Context, q 
 		return
 	}
 	path := "llm-gateway/managed-developer/overrides/" + url.PathEscape(m.TargetKind.ValueString()) + "/" + url.PathEscape(m.TargetID.ValueString())
-	if err := r.client.Do(ctx, http.MethodDelete, path, nil, nil); err != nil && !IsNotFound(err) {
+	if err := r.client.Do(ctx, http.MethodDelete, path+"?accessProfileId="+url.QueryEscape(m.AccessProfileID.ValueString()), nil, nil); err != nil && !IsNotFound(err) {
 		p.Diagnostics.AddError("Delete Forge LLM Gateway managed access override", err.Error())
 	}
 }
 func (r *llmGatewayManagedAccessOverrideResource) refresh(m *llmGatewayManagedAccessOverrideModel, o managedAccessOverrideAPI) {
-	m.ID = types.StringValue(fmt.Sprintf("%s:%s", o.TargetKind, o.TargetID))
+	m.ID = types.StringValue(fmt.Sprintf("%s:%s:%s", o.TargetKind, o.TargetID, o.AccessProfileID))
 	m.TargetKind = types.StringValue(o.TargetKind)
 	m.TargetID = types.StringValue(o.TargetID)
 	m.AccessProfileID = types.StringValue(o.AccessProfileID)
+	m.HostedDefault = types.BoolValue(o.HostedDefault)
 	m.BudgetWindow = types.StringValue(o.Budget.BudgetWindow)
 	m.AmountUSD = types.Float64PointerValue(o.Budget.AmountUSD)
 	m.TotalTokenLimit = types.Int64PointerValue(o.Budget.TotalTokenLimit)
