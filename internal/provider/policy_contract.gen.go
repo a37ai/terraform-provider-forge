@@ -19,13 +19,13 @@ var canonicalAccessSeverities = []string{"low", "medium", "high", "critical"}
 
 var canonicalAccessApprovalModes = []string{"admin_approval", "self_serve"}
 
-var canonicalContentEvaluationPoints = []string{"prompt", "pre_tool", "post_tool", "response"}
+var canonicalContentEvaluationPoints = []string{"prompt", "pre_tool", "post_tool"}
 
 var canonicalConditionOperators = []string{"eq", "neq", "in", "not_in", "contains", "contains_any", "contains_all", "starts_with", "ends_with", "matches", "gt", "gte", "lt", "lte", "exists"}
 
 var canonicalCountOperators = []string{"eq", "gt", "gte", "lt", "lte"}
 
-var canonicalContentFields = []string{"identity.user_id", "identity.group_ids", "identity.service_account_id", "request.prompt", "event.kind", "event.title", "event.summary", "event.labels", "event.severity", "tool.server_id", "tool.id", "tool.input", "tool.input.command", "tool.input.script", "tool.input.file_path", "tool.input.url", "tool.input.workdir", "tool.input.approval", "tool.input.env", "tool.input.surface_kind", "tool.input.surface_key", "tool.result", "response.content", "classification.sensitivity_labels", "classification.data_labels", "classification.categories", "classification.data_source_kinds", "classification.proof_strength", "classification.provider_actions", "classification.has_unresolved_sensitive_content", "mcp.server_id", "mcp.tool_id", "mcp.gateway_endpoint_id", "mcp.package_id", "mcp.package_version", "mcp.remote_url", "llm.model", "llm.provider", "llm.input_tokens", "llm.output_tokens"}
+var canonicalContentFields = []string{"identity.user_id", "identity.group_ids", "identity.service_account_id", "request.prompt", "event.kind", "event.title", "event.summary", "event.labels", "event.severity", "tool.server_id", "tool.id", "tool.input", "tool.input.command", "tool.input.script", "tool.input.file_path", "tool.input.url", "tool.input.workdir", "tool.input.approval", "tool.input.env", "tool.input.surface_kind", "tool.input.surface_key", "tool.result", "classification.sensitivity_labels", "classification.data_labels", "classification.categories", "classification.data_source_kinds", "classification.proof_strength", "classification.provider_actions", "classification.has_unresolved_sensitive_content", "mcp.server_id", "mcp.tool_id", "mcp.gateway_endpoint_id", "mcp.package_id", "mcp.package_version", "mcp.remote_url", "llm.model", "llm.provider"}
 
 var canonicalAccessFields = []string{"identity.user_id", "identity.group_ids", "device.id", "device.platform", "product.id", "provider.id", "destination.domain", "destination.ip", "destination.port", "destination.protocol", "process.id", "process.entrypoint_id", "process.name", "process.path", "process.local_port", "browser.extension_id", "browser.extension_identity_id", "browser.extension_surface", "browser.account_id", "browser.account_domain", "browser.account_state", "browser.account_truth_state", "classification.state", "route.posture", "account.posture", "account.access_state", "account.profile_id", "control.path_kind", "source.family", "source.capability", "source.health_state", "local_model.governance_state", "local_model.proof_level", "local_model.name"}
 
@@ -64,9 +64,7 @@ var canonicalContentFieldTypes = map[string]string{"classification.categories": 
 	"identity.group_ids":                              "string_set",
 	"identity.service_account_id":                     "string",
 	"identity.user_id":                                "string",
-	"llm.input_tokens":                                "number",
 	"llm.model":                                       "string",
-	"llm.output_tokens":                               "number",
 	"llm.provider":                                    "string",
 	"mcp.gateway_endpoint_id":                         "string",
 	"mcp.package_id":                                  "string",
@@ -75,7 +73,6 @@ var canonicalContentFieldTypes = map[string]string{"classification.categories": 
 	"mcp.server_id":                                   "string",
 	"mcp.tool_id":                                     "string",
 	"request.prompt":                                  "string",
-	"response.content":                                "string",
 	"tool.id":                                         "string",
 	"tool.input":                                      "content",
 	"tool.input.approval":                             "string",
