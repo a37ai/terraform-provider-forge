@@ -108,12 +108,13 @@ func TestTypedConditionsValidateFamiliesShapesAndLimits(t *testing.T) {
 		{"distinct values access", "access", "only available", map[string]any{"priorDistinctValues": map[string]any{"within": "1h", "field": "device.id", "op": "gte", "value": float64(1)}}},
 		{"resource history content field", "resource", "not available", map[string]any{"hasPriorEvent": predicate("request.prompt", "eq", "x")}},
 		{"resource distinct content field", "resource", "not available", map[string]any{"priorDistinctValues": map[string]any{"within": "1h", "field": "request.prompt", "op": "gte", "value": float64(1)}}},
+		{"removed response field", "content", "not available", predicate("response.content", "contains", "secret")},
 		{"unknown field", "content", "not available", predicate("unknown.field", "eq", "x")},
 		{"unknown operator", "content", "not supported", predicate("request.prompt", "wat", "x")},
 		{"operator for field type", "content", "not valid for boolean", predicate("classification.has_unresolved_sensitive_content", "matches", "true")},
-		{"wrong scalar type", "content", "must be a number", predicate("llm.input_tokens", "gte", "many")},
-		{"wrong tuple item", "content", "items must be numbers", predicate("llm.input_tokens", "in", []any{float64(1), "two"})},
-		{"empty membership", "content", "must be a non-empty tuple", predicate("llm.input_tokens", "in", []any{})},
+		{"wrong scalar type", "access", "must be a number", predicate("destination.port", "gte", "many")},
+		{"wrong tuple item", "access", "items must be numbers", predicate("destination.port", "in", []any{float64(1), "two"})},
+		{"empty membership", "access", "must be a non-empty tuple", predicate("destination.port", "in", []any{})},
 		{"set equality scalar", "content", "tuple for set equality", predicate("identity.group_ids", "eq", "Finance")},
 		{"exists value", "content", "must omit value", predicate("request.prompt", "exists", true)},
 		{"missing value", "content", "requires value", map[string]any{"field": "request.prompt", "op": "eq"}},
@@ -161,8 +162,8 @@ func TestTypedConditionsEnforceDepthAndNodeBudgets(t *testing.T) {
 }
 
 func TestTypedConditionsPreserveCollectionPredicateValues(t *testing.T) {
-	condition := map[string]any{"field": "llm.input_tokens", "op": "in", "value": []any{float64(100), float64(200)}}
-	got, err := nativeConditionsFromTerraform(testDynamic(t, condition), "content")
+	condition := map[string]any{"field": "destination.port", "op": "in", "value": []any{float64(100), float64(200)}}
+	got, err := nativeConditionsFromTerraform(testDynamic(t, condition), "access")
 	if err != nil {
 		t.Fatal(err)
 	}
