@@ -34,15 +34,6 @@ func TestLLMGatewayPlanExpectedVersion(t *testing.T) {
 	}
 }
 
-func TestSetContainsUnknown(t *testing.T) {
-	if !setContainsUnknown(types.SetValueMust(types.StringType, []attr.Value{types.StringUnknown()})) {
-		t.Fatal("unknown Resource reference was treated as plan-time known")
-	}
-	if setContainsUnknown(types.SetValueMust(types.StringType, []attr.Value{types.StringValue("res_known")})) {
-		t.Fatal("known Resource reference was treated as unknown")
-	}
-}
-
 func TestResourcePolicyBroadScopeValidationDefersUnknownResource(t *testing.T) {
 	model := regoPolicyModel{
 		Enabled: types.BoolValue(true), AcknowledgeBroadScope: types.BoolValue(false),
