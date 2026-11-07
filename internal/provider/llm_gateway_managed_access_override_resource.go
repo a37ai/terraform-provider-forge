@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -15,31 +16,22 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 )
 
 type llmGatewayManagedAccessOverrideResource struct{ client *Client }
 type llmGatewayManagedAccessOverrideModel struct {
-	HostedDefault         types.Bool    `tfsdk:"hosted_default"`
-	ID                    types.String  `tfsdk:"id"`
-	TargetKind            types.String  `tfsdk:"target_kind"`
-	TargetID              types.String  `tfsdk:"target_id"`
-	AccessProfileID       types.String  `tfsdk:"access_profile_id"`
-	BudgetWindow          types.String  `tfsdk:"budget_window"`
-	AmountUSD             types.Float64 `tfsdk:"amount_usd"`
-	TotalTokenLimit       types.Int64   `tfsdk:"total_token_limit"`
-	AlertThresholdPercent types.Int64   `tfsdk:"alert_threshold_percent"`
+	HostedDefault   types.Bool   `tfsdk:"hosted_default"`
+	ID              types.String `tfsdk:"id"`
+	TargetKind      types.String `tfsdk:"target_kind"`
+	TargetID        types.String `tfsdk:"target_id"`
+	AccessProfileID types.String `tfsdk:"access_profile_id"`
 }
 type managedAccessOverrideAPI struct {
 	HostedDefault   bool   `json:"hostedDefault"`
 	TargetKind      string `json:"targetKind"`
 	TargetID        string `json:"targetId"`
 	AccessProfileID string `json:"accessProfileId"`
-	Budget          struct {
-		BudgetWindow          string   `json:"budgetWindow"`
-		AmountUSD             *float64 `json:"amountUsd"`
-		TotalTokenLimit       *int64   `json:"totalTokenLimit"`
-		AlertThresholdPercent *int64   `json:"alertThresholdPercent"`
-	} `json:"budget"`
 }
 type managedAccessStatusAPI struct {
 	Overrides []managedAccessOverrideAPI `json:"overrides"`
@@ -52,14 +44,12 @@ func (r *llmGatewayManagedAccessOverrideResource) Metadata(_ context.Context, q 
 	p.TypeName = q.ProviderTypeName + "_llm_gateway_managed_access_override"
 }
 func (r *llmGatewayManagedAccessOverrideResource) Schema(_ context.Context, _ resource.SchemaRequest, p *resource.SchemaResponse) {
-	p.Schema = schema.Schema{Attributes: map[string]schema.Attribute{
+	p.Schema = schema.Schema{Version: 1, Attributes: map[string]schema.Attribute{
 		"id":                schema.StringAttribute{Computed: true},
 		"target_kind":       schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.OneOf("user", "group", "service_account")}, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 		"target_id":         schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 		"hosted_default":    schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false)},
-		"access_profile_id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}}, "budget_window": schema.StringAttribute{Required: true},
-		"amount_usd": schema.Float64Attribute{Optional: true}, "total_token_limit": schema.Int64Attribute{Optional: true},
-		"alert_threshold_percent": schema.Int64Attribute{Optional: true, Description: "Notify administrators when usage reaches this percentage of the hard limit (1–99)."},
+		"access_profile_id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 	}}
 }
 func (r *llmGatewayManagedAccessOverrideResource) Configure(_ context.Context, q resource.ConfigureRequest, _ *resource.ConfigureResponse) {
@@ -87,22 +77,7 @@ func (r *llmGatewayManagedAccessOverrideResource) save(ctx context.Context, m *l
 	if d.HasError() {
 		return
 	}
-	budget := map[string]any{"budgetWindow": m.BudgetWindow.ValueString()}
-	if !m.AmountUSD.IsNull() {
-		budget["amountUsd"] = m.AmountUSD.ValueFloat64()
-	}
-	if !m.TotalTokenLimit.IsNull() {
-		budget["totalTokenLimit"] = m.TotalTokenLimit.ValueInt64()
-	}
-	if !m.AlertThresholdPercent.IsNull() {
-		value := m.AlertThresholdPercent.ValueInt64()
-		if value < 1 || value > 99 {
-			d.AddError("Invalid budget alert threshold", "alert_threshold_percent must be from 1 to 99")
-			return
-		}
-		budget["alertThresholdPercent"] = value
-	}
-	body := map[string]any{"hostedDefault": m.HostedDefault.ValueBool(), "accessProfileId": m.AccessProfileID.ValueString(), "budget": budget}
+	body := map[string]any{"hostedDefault": m.HostedDefault.ValueBool(), "accessProfileId": m.AccessProfileID.ValueString()}
 	path := "llm-gateway/managed-developer/overrides/" + url.PathEscape(m.TargetKind.ValueString()) + "/" + url.PathEscape(m.TargetID.ValueString())
 	var out managedAccessOverrideAPI
 	if err := r.client.Do(ctx, http.MethodPut, path, body, &out); err != nil {
@@ -148,10 +123,35 @@ func (r *llmGatewayManagedAccessOverrideResource) refresh(m *llmGatewayManagedAc
 	m.TargetID = types.StringValue(o.TargetID)
 	m.AccessProfileID = types.StringValue(o.AccessProfileID)
 	m.HostedDefault = types.BoolValue(o.HostedDefault)
-	m.BudgetWindow = types.StringValue(o.Budget.BudgetWindow)
-	m.AmountUSD = types.Float64PointerValue(o.Budget.AmountUSD)
-	m.TotalTokenLimit = types.Int64PointerValue(o.Budget.TotalTokenLimit)
-	m.AlertThresholdPercent = types.Int64PointerValue(o.Budget.AlertThresholdPercent)
 }
 
 var _ resource.ResourceWithConfigure = (*llmGatewayManagedAccessOverrideResource)(nil)
+
+// UpgradeState removes obsolete budget fields from Terraform state without
+// deleting or changing the remote budgets they previously configured.
+func (r *llmGatewayManagedAccessOverrideResource) UpgradeState(context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{0: {StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+		var values map[string]json.RawMessage
+		if err := json.Unmarshal(req.RawState.JSON, &values); err != nil {
+			resp.Diagnostics.AddError("Upgrade access assignment state", err.Error())
+			return
+		}
+		for _, key := range []string{"budget_window", "amount_usd", "total_token_limit", "alert_threshold_percent"} {
+			delete(values, key)
+		}
+		raw, err := json.Marshal(values)
+		if err != nil {
+			resp.Diagnostics.AddError("Upgrade access assignment state", err.Error())
+			return
+		}
+		var current resource.SchemaResponse
+		r.Schema(ctx, resource.SchemaRequest{}, &current)
+		value, err := (&tfprotov6.RawState{JSON: raw}).Unmarshal(current.Schema.Type().TerraformType(ctx))
+		if err != nil {
+			resp.Diagnostics.AddError("Upgrade access assignment state", err.Error())
+			return
+		}
+		resp.State.Raw = value
+		resp.State.Schema = current.Schema
+	}}}
+}
