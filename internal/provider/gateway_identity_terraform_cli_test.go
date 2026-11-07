@@ -54,7 +54,7 @@ func TestTerraformCLIGatewayIdentityLifecycle(t *testing.T) {
 		case r.Method == http.MethodPut && path == "llm-gateway/managed-developer/overrides/service_account/lgwsa_tf":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			override = map[string]any{"targetKind": "service_account", "targetId": "lgwsa_tf", "accessProfileId": body["accessProfileId"], "budget": body["budget"]}
+			override = map[string]any{"targetKind": "service_account", "targetId": "lgwsa_tf", "accessProfileId": body["accessProfileId"], "hostedDefault": body["hostedDefault"]}
 			_ = json.NewEncoder(w).Encode(override)
 		case r.Method == http.MethodDelete && path == "llm-gateway/managed-developer/overrides/service_account/lgwsa_tf":
 			override = nil
@@ -113,8 +113,6 @@ resource "forge_llm_gateway_managed_access_override" "test" {
   target_kind="service_account"
   target_id=forge_llm_gateway_service_account.test.id
   access_profile_id="profile_1"
-  budget_window="monthly"
-  total_token_limit=100000
 }
 resource "forge_device_gateway_identity_assignment" "test" {
   device_id="device_linux"
