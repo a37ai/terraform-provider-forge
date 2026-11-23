@@ -51,8 +51,10 @@ scope is intentionally separate from policy management.
   an ephemeral, sensitive variable to keep it out of saved plans and state.
   Increment `secret_version` to rotate it.
 - `forge_mcp_acl` and `forge_skill_acl` manage readable registry ACLs.
-- `forge_llm_gateway_access_profile` atomically manages model patterns and
-  provider routes. Caller assignment is intentionally separate: after apply,
+- `forge_mcp_server_client_networks` manages allowed client networks for an
+  existing MCP Registry server.
+- `forge_llm_gateway_access_profile` atomically manages model patterns,
+  allowed client networks, and provider routes. Caller assignment is intentionally separate: after apply,
   create a gateway key in **LLM Gateway → Gateway keys** and select the profile.
 - `forge_policy_authority` explicitly adopts or releases an existing
   Console-managed policy at a known revision.
