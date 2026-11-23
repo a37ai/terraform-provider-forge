@@ -210,6 +210,7 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 	authority := acceptanceAuthorityState{PolicyID: "console-owned-policy", Revision: 1, ManagementMode: "forge"}
 	var gatewayProfile map[string]any
 	var gatewayRoutes []any
+	mcpNetworks := mcpServerClientNetworksAPI{AllowedClientNetworks: []string{}}
 	writes, deletes := 0, 0
 	writeKeys := map[string]int{}
 	authorityClaims, authorityReleases := 0, 0
@@ -275,6 +276,31 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 			authority.ManagerInstance = ""
 			authorityReleases++
 			w.WriteHeader(http.StatusNoContent)
+		case path == "mcp-registry/mcri_github/allowed-client-networks":
+			mu.Lock()
+			defer mu.Unlock()
+			if r.Header.Get("X-Forge-Terraform-Manager") != "security-policy-repository" ||
+				r.Header.Get("X-Forge-Terraform-Instance") != "production" {
+				http.Error(w, `{"error":"unexpected Terraform owner"}`, http.StatusConflict)
+				return
+			}
+			switch r.Method {
+			case http.MethodPut:
+				var body mcpServerClientNetworksAPI
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AllowedClientNetworks == nil {
+					http.Error(w, `{"error":"invalid network list"}`, http.StatusBadRequest)
+					return
+				}
+				mcpNetworks.AllowedClientNetworks = body.AllowedClientNetworks
+				mcpNetworks.AllowedClientNetworksManaged = true
+			case http.MethodDelete:
+				mcpNetworks.AllowedClientNetworksManaged = false
+			case http.MethodGet:
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(mcpNetworks)
 		case r.Method == http.MethodPost && path == "llm-gateway/plans/validate":
 			var plan struct {
 				ExpectedVersion int64 `json:"expectedVersion"`
@@ -304,8 +330,14 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 				return
 			}
 			mu.Lock()
+			if _, configured := body.Profile["allowedClientNetworks"]; !configured && gatewayProfile != nil {
+				body.Profile["allowedClientNetworks"] = gatewayProfile["allowedClientNetworks"]
+			}
+			if body.Profile["routingKey"] == "" {
+				body.Profile["routingKey"] = body.Profile["id"]
+			}
 			gatewayProfile = body.Profile
-			gatewayProfile["version"] = float64(1)
+			gatewayProfile["version"] = float64(body.ExpectedVersion + 1)
 			gatewayProfile["managementMode"] = "terraform"
 			gatewayProfile["managerId"] = "security-policy-repository"
 			gatewayProfile["managerInstance"] = "production"
@@ -387,6 +419,11 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 		}
 		resourceDefinitions[id] = item.Definition
 	}
+	if !mcpNetworks.AllowedClientNetworksManaged || !reflect.DeepEqual(mcpNetworks.AllowedClientNetworks, []string{"203.0.113.0/24"}) ||
+		!reflect.DeepEqual(gatewayProfile["allowedClientNetworks"], []any{"2001:db8:1::/48"}) {
+		mu.Unlock()
+		t.Fatal("network restrictions were not applied")
+	}
 	mu.Unlock()
 	if object(resourceDefinitions["resource-matrix-allow"]["logic"])["module"] == nil || resourceDefinitions["resource-matrix-review"]["conditions"] == nil || resourceDefinitions["production-database-deletes"]["conditions"] == nil {
 		t.Fatal("Resource allow, block, and review did not preserve native/Rego authoring")
@@ -424,6 +461,8 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 		{"forge_resource_policy.filter_api_response", "resource-matrix-filter"},
 		{"forge_resource_policy.approve_database_writes", "resource-matrix-approval"},
 		{"forge_mcp_acl.github_write", "github-write"},
+		{"forge_mcp_server_client_networks.github", "mcri_github"},
+		{"forge_llm_gateway_access_profile.production", "production-routing"},
 		{"forge_skill_acl.production_deploy", "production-deploy"},
 	} {
 		runAcceptanceCommand(t, terraform, []string{"state", "rm", imported.address}, work, env)
@@ -441,6 +480,7 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 		`name        = "Block production database deletes"`: `name        = "Block production database deletes updated"`,
 		`name   = "Restrict GitHub write tools"`:            `name   = "Restrict GitHub write tools updated"`,
 		`skill  = "deploy-production"`:                      `skill  = "deploy-production-updated"`,
+		`["203.0.113.0/24"]`:                                `["203.0.113.10"]`,
 	} {
 		if !strings.Contains(updated, before) {
 			t.Fatalf("acceptance fixture missing update target %q", before)
@@ -457,6 +497,8 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 	// state with an exact detailed-exitcode=2 assertion, then prove a normal
 	// plan repairs all four GA resources.
 	mu.Lock()
+	mcpNetworks.AllowedClientNetworks = []string{"192.0.2.0/24"}
+	gatewayProfile["allowedClientNetworks"] = []any{"2001:db8:2::/48"}
 	for _, key := range []string{
 		"content-policies/matrix-allow",
 		"access-policies/unmanaged-device",
@@ -499,6 +541,11 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 		"mcp":      stored["content-policies/github-write"].Definition["name"],
 		"skill":    stored["skill-acls/production-deploy"].Definition["effect"],
 	}
+	if !mcpNetworks.AllowedClientNetworksManaged || !reflect.DeepEqual(mcpNetworks.AllowedClientNetworks, []string{"203.0.113.10/32"}) ||
+		!reflect.DeepEqual(gatewayProfile["allowedClientNetworks"], []any{"2001:db8:1::/48"}) {
+		mu.Unlock()
+		t.Fatal("network restrictions did not converge after drift")
+	}
 	mu.Unlock()
 	expectedRepairs := map[string]any{
 		"content":  "Allow reviewed prompt updated",
@@ -510,10 +557,37 @@ func TestTerraformCLIAllPolicySchemas(t *testing.T) {
 	if !reflect.DeepEqual(repaired, expectedRepairs) {
 		t.Fatalf("GA drift repair mismatch got=%+v want=%+v", repaired, expectedRepairs)
 	}
+	// A profile edit can omit the list; only an explicit empty set clears it.
+	const configuredNetworks = `  allowed_client_networks = ["2001:db8:1::/48"]`
+	for _, test := range []struct {
+		name string
+		hcl  string
+		want []any
+	}{
+		{"preserve", "", []any{"2001:db8:1::/48"}},
+		{"clear", "  allowed_client_networks = []", []any{}},
+	} {
+		config := strings.Replace(updated, configuredNetworks, test.hcl, 1)
+		config = strings.Replace(config, `"Production routing"`, fmt.Sprintf("%q", "Production routing "+test.name), 1)
+		if err := os.WriteFile(filepath.Join(work, "main.tf"), []byte(config), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		runAcceptanceCommand(t, terraform, []string{"apply", "-auto-approve", "-input=false", "-no-color"}, work, env)
+		mu.Lock()
+		got := gatewayProfile["allowedClientNetworks"]
+		mu.Unlock()
+		if !reflect.DeepEqual(got, test.want) {
+			t.Fatalf("%s network list = %#v, want %#v", test.name, got, test.want)
+		}
+	}
+
 	runAcceptanceCommand(t, terraform, []string{"destroy", "-auto-approve", "-input=false", "-no-color"}, work, env)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(stored) != 0 || gatewayProfile != nil || writes != 32 || deletes != 22 || authority.ManagementMode != "forge" || authority.ManagerID != "" || authority.ManagerInstance != "" || authorityClaims != 1 || authorityReleases != 1 {
+	if mcpNetworks.AllowedClientNetworksManaged || !reflect.DeepEqual(mcpNetworks.AllowedClientNetworks, []string{"203.0.113.10/32"}) {
+		t.Fatalf("Terraform destroy did not release ownership and preserve the MCP list: %+v", mcpNetworks)
+	}
+	if len(stored) != 0 || gatewayProfile != nil || writes != 35 || deletes != 22 || authority.ManagementMode != "forge" || authority.ManagerID != "" || authority.ManagerInstance != "" || authorityClaims != 1 || authorityReleases != 1 {
 		t.Fatalf("all-resource lifecycle stores=%d writes=%d writeKeys=%+v deletes=%d authority=%+v claims=%d releases=%d", len(stored), writes, writeKeys, deletes, authority, authorityClaims, authorityReleases)
 	}
 }

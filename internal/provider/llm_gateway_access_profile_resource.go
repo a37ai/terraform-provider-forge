@@ -29,25 +29,26 @@ import (
 type llmGatewayAccessProfileResource struct{ client *Client }
 
 type llmGatewayAccessProfileModel struct {
-	RoutingKey      types.String                      `tfsdk:"routing_key"`
-	ID              types.String                      `tfsdk:"id"`
-	Name            types.String                      `tfsdk:"name"`
-	Description     types.String                      `tfsdk:"description"`
-	State           types.String                      `tfsdk:"state"`
-	ModelPatterns   types.Set                         `tfsdk:"model_patterns"`
-	DataClasses     types.Set                         `tfsdk:"data_classes"`
-	PolicyHooks     types.Set                         `tfsdk:"policy_hooks"`
-	Routes          types.List                        `tfsdk:"route"`
-	FallbackRules   types.List                        `tfsdk:"fallback_rule"`
-	PromptCache     *llmGatewayPromptCachePlanModel   `tfsdk:"prompt_cache"`
-	ResponseCache   *llmGatewayResponseCachePlanModel `tfsdk:"response_cache"`
-	WebSearch       *llmGatewayWebSearchPlanModel     `tfsdk:"web_search"`
-	Version         types.Int64                       `tfsdk:"version"`
-	AdoptExisting   types.Bool                        `tfsdk:"adopt_existing"`
-	ManagementMode  types.String                      `tfsdk:"management_mode"`
-	ManagerID       types.String                      `tfsdk:"manager_id"`
-	ManagerInstance types.String                      `tfsdk:"manager_instance"`
-	ValidationToken types.String                      `tfsdk:"validation_token"`
+	RoutingKey            types.String                      `tfsdk:"routing_key"`
+	ID                    types.String                      `tfsdk:"id"`
+	Name                  types.String                      `tfsdk:"name"`
+	Description           types.String                      `tfsdk:"description"`
+	State                 types.String                      `tfsdk:"state"`
+	AllowedClientNetworks types.Set                         `tfsdk:"allowed_client_networks"`
+	ModelPatterns         types.Set                         `tfsdk:"model_patterns"`
+	DataClasses           types.Set                         `tfsdk:"data_classes"`
+	PolicyHooks           types.Set                         `tfsdk:"policy_hooks"`
+	Routes                types.List                        `tfsdk:"route"`
+	FallbackRules         types.List                        `tfsdk:"fallback_rule"`
+	PromptCache           *llmGatewayPromptCachePlanModel   `tfsdk:"prompt_cache"`
+	ResponseCache         *llmGatewayResponseCachePlanModel `tfsdk:"response_cache"`
+	WebSearch             *llmGatewayWebSearchPlanModel     `tfsdk:"web_search"`
+	Version               types.Int64                       `tfsdk:"version"`
+	AdoptExisting         types.Bool                        `tfsdk:"adopt_existing"`
+	ManagementMode        types.String                      `tfsdk:"management_mode"`
+	ManagerID             types.String                      `tfsdk:"manager_id"`
+	ManagerInstance       types.String                      `tfsdk:"manager_instance"`
+	ValidationToken       types.String                      `tfsdk:"validation_token"`
 }
 
 type llmGatewayRoutePlanModel struct {
@@ -135,12 +136,13 @@ type llmGatewayAccessProfileAPI struct {
 		Enabled             bool   `json:"enabled"`
 		CredentialSecretRef string `json:"credentialSecretRef"`
 	} `json:"webSearchSettings"`
-	DataClasses     []string `json:"dataClasses"`
-	PolicyHooks     []string `json:"policyHooks"`
-	Version         int64    `json:"version"`
-	ManagementMode  string   `json:"managementMode"`
-	ManagerID       *string  `json:"managerId"`
-	ManagerInstance *string  `json:"managerInstance"`
+	AllowedClientNetworks []string `json:"allowedClientNetworks"`
+	DataClasses           []string `json:"dataClasses"`
+	PolicyHooks           []string `json:"policyHooks"`
+	Version               int64    `json:"version"`
+	ManagementMode        string   `json:"managementMode"`
+	ManagerID             *string  `json:"managerId"`
+	ManagerInstance       *string  `json:"managerInstance"`
 }
 type llmGatewayRouteAPI struct {
 	ID                    string          `json:"id"`
@@ -169,14 +171,23 @@ func (r *llmGatewayAccessProfileResource) Schema(_ context.Context, _ resource.S
 		return schema.SetAttribute{Optional: true, Computed: true, Description: description, ElementType: types.StringType, Validators: []validator.Set{setvalidator.ValueStringsAre(stringvalidator.OneOf("prompt", "pre_tool_use", "post_tool_use"))}}
 	}
 	p.Schema = schema.Schema{Description: "A Forge LLM Gateway access profile and its atomic provider route plan. This is the same durable object used by the staging gateway runtime and console.", Attributes: map[string]schema.Attribute{
-		"id":          schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-		"routing_key": schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "Immutable organization-unique routing key selected with X-Forge-Gateway-Profile."},
-		"name":        schema.StringAttribute{Required: true}, "description": schema.StringAttribute{Optional: true},
+		"id": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+		"routing_key": schema.StringAttribute{
+			Optional: true, Computed: true,
+			PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown(), stringplanmodifier.RequiresReplaceIfConfigured()},
+			Description:   "Immutable organization-unique routing key selected with X-Forge-Gateway-Profile.",
+		},
+		"name": schema.StringAttribute{Required: true}, "description": schema.StringAttribute{Optional: true},
 		"state": schema.StringAttribute{Optional: true, Computed: true, Description: "Lifecycle state: draft, active, disabled, or archived.", Validators: []validator.String{stringvalidator.OneOf("draft", "active", "disabled", "archived")}},
 		"model_patterns": schema.SetAttribute{
 			Optional: true, Computed: true, ElementType: types.StringType,
 			Description: "Requested model names or glob patterns allowed by this profile, such as gpt-5 or claude-*.",
 			Validators:  []validator.Set{setvalidator.SizeAtMost(256)},
+		},
+		"allowed_client_networks": schema.SetAttribute{
+			Optional: true, Computed: true, ElementType: types.StringType,
+			Description: "Allowed IP addresses or CIDR ranges. Omit to preserve the existing setting. An empty set clears the network restriction.",
+			Validators:  []validator.Set{allowedClientNetworksValidator{}},
 		},
 		"data_classes":    schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Validators: []validator.Set{setvalidator.SizeAtMost(256)}},
 		"policy_hooks":    hooks("Gateway stages evaluated for this profile: prompt, pre_tool_use, and post_tool_use."),
@@ -281,6 +292,9 @@ func (r *llmGatewayAccessProfileResource) ModifyPlan(ctx context.Context, q reso
 			}
 		}
 	}
+	var configuredNetworks types.Set
+	p.Diagnostics.Append(q.Config.GetAttribute(ctx, path.Root("allowed_client_networks"), &configuredNetworks)...)
+	model.AllowedClientNetworks = clientNetworksForWrite(configuredNetworks, model.AllowedClientNetworks)
 	body := r.payload(ctx, model, summary.Providers, &p.Diagnostics)
 	if p.Diagnostics.HasError() {
 		return
@@ -289,13 +303,15 @@ func (r *llmGatewayAccessProfileResource) ModifyPlan(ctx context.Context, q reso
 	if !q.State.Raw.IsNull() {
 		var prior llmGatewayAccessProfileModel
 		p.Diagnostics.Append(q.State.Get(ctx, &prior)...)
+		prior.AllowedClientNetworks = clientNetworksForWrite(configuredNetworks, prior.AllowedClientNetworks)
 		priorBody := r.payload(ctx, prior, summary.Providers, &p.Diagnostics)
 		if p.Diagnostics.HasError() {
 			return
 		}
 		priorBody["expectedVersion"], priorBody["adoptExisting"] = expected, prior.AdoptExisting.ValueBool()
-		if canonicalTerraformPayloadEqual(body, priorBody) {
-			p.Diagnostics.Append(p.Plan.SetAttribute(ctx, path.Root("validation_token"), prior.ValidationToken.ValueString())...)
+		// Terraform applies spelling changes even when the normalized CIDRs match.
+		if model.AllowedClientNetworks.Equal(prior.AllowedClientNetworks) && canonicalTerraformPayloadEqual(body, priorBody) {
+			p.Diagnostics.Append(p.Plan.SetAttribute(ctx, path.Root("validation_token"), prior.ValidationToken)...)
 			return
 		}
 	}
@@ -307,14 +323,18 @@ func (r *llmGatewayAccessProfileResource) ModifyPlan(ctx context.Context, q reso
 	p.Diagnostics.Append(p.Plan.SetAttribute(ctx, path.Root("validation_token"), validation.ValidationToken)...)
 }
 func (r *llmGatewayAccessProfileResource) Create(ctx context.Context, q resource.CreateRequest, p *resource.CreateResponse) {
-	r.apply(ctx, q.Plan, &p.Diagnostics, func(model llmGatewayAccessProfileModel) { p.Diagnostics.Append(p.State.Set(ctx, &model)...) })
+	var configuredNetworks types.Set
+	p.Diagnostics.Append(q.Config.GetAttribute(ctx, path.Root("allowed_client_networks"), &configuredNetworks)...)
+	r.apply(ctx, q.Plan, configuredNetworks, &p.Diagnostics, func(model llmGatewayAccessProfileModel) { p.Diagnostics.Append(p.State.Set(ctx, &model)...) })
 }
 func (r *llmGatewayAccessProfileResource) Update(ctx context.Context, q resource.UpdateRequest, p *resource.UpdateResponse) {
-	r.apply(ctx, q.Plan, &p.Diagnostics, func(model llmGatewayAccessProfileModel) { p.Diagnostics.Append(p.State.Set(ctx, &model)...) })
+	var configuredNetworks types.Set
+	p.Diagnostics.Append(q.Config.GetAttribute(ctx, path.Root("allowed_client_networks"), &configuredNetworks)...)
+	r.apply(ctx, q.Plan, configuredNetworks, &p.Diagnostics, func(model llmGatewayAccessProfileModel) { p.Diagnostics.Append(p.State.Set(ctx, &model)...) })
 }
 func (r *llmGatewayAccessProfileResource) apply(ctx context.Context, plan interface {
 	Get(context.Context, any) diag.Diagnostics
-}, diagnostics *diag.Diagnostics, save func(llmGatewayAccessProfileModel)) {
+}, configuredNetworks types.Set, diagnostics *diag.Diagnostics, save func(llmGatewayAccessProfileModel)) {
 	var model llmGatewayAccessProfileModel
 	diagnostics.Append(plan.Get(ctx, &model)...)
 	if diagnostics.HasError() {
@@ -325,7 +345,9 @@ func (r *llmGatewayAccessProfileResource) apply(ctx context.Context, plan interf
 		diagnostics.AddError("Resolve Forge LLM Gateway provider references", err.Error())
 		return
 	}
-	body := r.payload(ctx, model, summary.Providers, diagnostics)
+	writeModel := model
+	writeModel.AllowedClientNetworks = clientNetworksForWrite(configuredNetworks, model.AllowedClientNetworks)
+	body := r.payload(ctx, writeModel, summary.Providers, diagnostics)
 	if diagnostics.HasError() {
 		return
 	}
@@ -348,6 +370,13 @@ func (r *llmGatewayAccessProfileResource) apply(ctx context.Context, plan interf
 	if !diagnostics.HasError() {
 		save(model)
 	}
+}
+
+func clientNetworksForWrite(configured, planned types.Set) types.Set {
+	if configured.IsNull() {
+		return types.SetNull(types.StringType)
+	}
+	return planned
 }
 
 func llmGatewayPlanExpectedVersion(token string) (int64, error) {
@@ -431,6 +460,14 @@ func (r *llmGatewayAccessProfileResource) payload(ctx context.Context, model llm
 		routes = append(routes, item)
 	}
 	profile := map[string]any{"routingKey": model.RoutingKey.ValueString(), "id": model.ID.ValueString(), "name": model.Name.ValueString(), "modelSelectors": selectors, "dataClasses": dataClasses, "policyHooks": hooks}
+	networksPath := path.Root("allowed_client_networks")
+	networks, networkDiagnostics := normalizedAllowedClientNetworks(ctx, model.AllowedClientNetworks, networksPath)
+	diagnostics.Append(networkDiagnostics...)
+	if networks != nil {
+		profile["allowedClientNetworks"] = networks
+	} else if !model.AllowedClientNetworks.IsNull() && !networkDiagnostics.HasError() {
+		diagnostics.AddAttributeError(networksPath, "Unknown client networks", "Forge must validate the configured network list when creating the Terraform plan. Supply IP addresses or CIDR ranges known at plan time.")
+	}
 	var fallbackRules []llmGatewayFallbackRulePlanModel
 	if !model.FallbackRules.IsNull() && !model.FallbackRules.IsUnknown() {
 		diagnostics.Append(model.FallbackRules.ElementsAs(ctx, &fallbackRules, false)...)
@@ -517,7 +554,13 @@ func (r *llmGatewayAccessProfileResource) refreshModel(ctx context.Context, mode
 	model.ManagementMode = types.StringValue(profile.ManagementMode)
 	model.ManagerID = types.StringPointerValue(profile.ManagerID)
 	model.ManagerInstance = types.StringPointerValue(profile.ManagerInstance)
-	model.DataClasses, model.PolicyHooks = setStringState(ctx, profile.DataClasses, diagnostics), setStringState(ctx, profile.PolicyHooks, diagnostics)
+	model.AllowedClientNetworks = allowedClientNetworksState(ctx, model.AllowedClientNetworks, profile.AllowedClientNetworks, diagnostics)
+	if len(profile.DataClasses) == 0 {
+		model.DataClasses = types.SetValueMust(types.StringType, nil)
+	} else {
+		model.DataClasses = setStringState(ctx, profile.DataClasses, diagnostics)
+	}
+	model.PolicyHooks = setStringState(ctx, profile.PolicyHooks, diagnostics)
 	fallbackRules := make([]llmGatewayFallbackRulePlanModel, 0, len(profile.FailoverRules))
 	for _, rule := range profile.FailoverRules {
 		fallbackRules = append(fallbackRules, llmGatewayFallbackRulePlanModel{Reason: types.StringValue(rule.Reason), RouteIDs: listStringState(ctx, rule.RouteIDs, diagnostics)})
@@ -643,6 +686,7 @@ func (r *llmGatewayAccessProfileResource) Delete(ctx context.Context, q resource
 }
 func (r *llmGatewayAccessProfileResource) ImportState(ctx context.Context, q resource.ImportStateRequest, p *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), q, p)
+	p.Diagnostics.Append(p.State.SetAttribute(ctx, path.Root("adopt_existing"), false)...)
 }
 
 var _ resource.ResourceWithConfigure = (*llmGatewayAccessProfileResource)(nil)
