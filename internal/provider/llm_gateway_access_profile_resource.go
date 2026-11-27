@@ -29,6 +29,7 @@ import (
 type llmGatewayAccessProfileResource struct{ client *Client }
 
 type llmGatewayAccessProfileModel struct {
+	CaptureMode           types.String                      `tfsdk:"capture_mode"`
 	RoutingKey            types.String                      `tfsdk:"routing_key"`
 	ID                    types.String                      `tfsdk:"id"`
 	Name                  types.String                      `tfsdk:"name"`
@@ -111,6 +112,7 @@ type llmGatewayRoutePlanResponse struct {
 	Routes        []llmGatewayRouteAPI       `json:"routes"`
 }
 type llmGatewayAccessProfileAPI struct {
+	CaptureMode    string          `json:"captureMode"`
 	RoutingKey     string          `json:"routingKey"`
 	ID             string          `json:"id"`
 	Name           string          `json:"name"`
@@ -178,7 +180,8 @@ func (r *llmGatewayAccessProfileResource) Schema(_ context.Context, _ resource.S
 			Description:   "Immutable organization-unique routing key selected with X-Forge-Gateway-Profile.",
 		},
 		"name": schema.StringAttribute{Required: true}, "description": schema.StringAttribute{Optional: true},
-		"state": schema.StringAttribute{Optional: true, Computed: true, Description: "Lifecycle state: draft, active, disabled, or archived.", Validators: []validator.String{stringvalidator.OneOf("draft", "active", "disabled", "archived")}},
+		"state":        schema.StringAttribute{Optional: true, Computed: true, Description: "Lifecycle state: draft, active, disabled, or archived.", Validators: []validator.String{stringvalidator.OneOf("draft", "active", "disabled", "archived")}},
+		"capture_mode": schema.StringAttribute{Optional: true, Computed: true, Description: "Standard saves Gateway sessions. Usage only records usage and spend without saving session content.", Validators: []validator.String{stringvalidator.OneOf("standard", "usage_only")}},
 		"model_patterns": schema.SetAttribute{
 			Optional: true, Computed: true, ElementType: types.StringType,
 			Description: "Requested model names or glob patterns allowed by this profile, such as gpt-5 or claude-*.",
@@ -460,6 +463,9 @@ func (r *llmGatewayAccessProfileResource) payload(ctx context.Context, model llm
 		routes = append(routes, item)
 	}
 	profile := map[string]any{"routingKey": model.RoutingKey.ValueString(), "id": model.ID.ValueString(), "name": model.Name.ValueString(), "modelSelectors": selectors, "dataClasses": dataClasses, "policyHooks": hooks}
+	if !model.CaptureMode.IsNull() && !model.CaptureMode.IsUnknown() {
+		profile["captureMode"] = model.CaptureMode.ValueString()
+	}
 	networksPath := path.Root("allowed_client_networks")
 	networks, networkDiagnostics := normalizedAllowedClientNetworks(ctx, model.AllowedClientNetworks, networksPath)
 	diagnostics.Append(networkDiagnostics...)
@@ -550,6 +556,10 @@ func (r *llmGatewayAccessProfileResource) refreshModel(ctx context.Context, mode
 		diagnostics.AddError("Unsupported Forge LLM Gateway model selectors", "This access profile uses model selectors that cannot be represented by model_patterns. Update the profile in Forge before managing it with Terraform.")
 		return
 	}
+	if profile.CaptureMode == "" {
+		profile.CaptureMode = "standard"
+	}
+	model.CaptureMode = types.StringValue(profile.CaptureMode)
 	model.Version = types.Int64Value(profile.Version)
 	model.ManagementMode = types.StringValue(profile.ManagementMode)
 	model.ManagerID = types.StringPointerValue(profile.ManagerID)

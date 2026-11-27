@@ -23,6 +23,7 @@ A Forge LLM Gateway access profile and its atomic provider route plan. This is t
 
 - `adopt_existing` (Boolean) Explicitly claim an existing Forge-managed profile at its current version. New profiles do not need this.
 - `allowed_client_networks` (Set of String) Allowed IPv4 or IPv6 addresses or CIDR ranges known at plan time. Omit to preserve the existing setting. Use an empty set to clear the restriction. Existing profile grants remain required.
+- `capture_mode` (String) Use `usage_only` to record usage and spend without saving Gateway sessions on supported OpenAI Chat Completions routes. New profiles default to `standard`. Omitting the value on an existing profile preserves its configured mode.
 - `data_classes` (Set of String)
 - `description` (String)
 - `fallback_rule` (Block List) Ordered existing destination routes for one provider failure reason. Forge policy and profile budget denials remain terminal. (see [below for nested schema](#nestedblock--fallback_rule))

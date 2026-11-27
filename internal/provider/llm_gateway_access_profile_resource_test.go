@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -15,6 +16,38 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+func TestLLMGatewayAccessProfilePayloadCaptureMode(t *testing.T) {
+	ctx := context.Background()
+	routes, routeDiagnostics := types.ListValueFrom(ctx, routeObjectType(), []llmGatewayRoutePlanModel{{
+		Provider: types.StringValue("OpenAI"), Name: types.StringValue("Chat"),
+		RequestedModelPattern: types.StringValue("gpt-4o-mini"), UpstreamModel: types.StringValue("gpt-4o-mini"),
+		APISurface: types.StringValue("openai_chat_completions"), PolicyHooks: types.SetNull(types.StringType),
+	}})
+	if routeDiagnostics.HasError() {
+		t.Fatal(routeDiagnostics)
+	}
+	resource := &llmGatewayAccessProfileResource{}
+	model := llmGatewayAccessProfileModel{Routes: routes, FallbackRules: types.ListNull(fallbackRuleObjectType())}
+	providers := []llmGatewayProviderAPI{{ID: "provider-1", Name: "OpenAI"}}
+	for _, mode := range []types.String{types.StringNull(), types.StringUnknown(), types.StringValue("usage_only")} {
+		model.CaptureMode = mode
+		var diagnostics diag.Diagnostics
+		payload := resource.payload(ctx, model, providers, &diagnostics)
+		if diagnostics.HasError() {
+			t.Fatal(diagnostics)
+		}
+		profile := payload["profile"].(map[string]any)
+		value, present := profile["captureMode"]
+		if mode.IsNull() || mode.IsUnknown() {
+			if present {
+				t.Fatalf("omitted capture mode became %v", value)
+			}
+		} else if value != mode.ValueString() {
+			t.Fatalf("capture mode = %v, want %s", value, mode.ValueString())
+		}
+	}
+}
 
 func TestLLMGatewayPolicyHooksRejectResponse(t *testing.T) {
 	var schemaResponse resource.SchemaResponse
